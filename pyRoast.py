@@ -1,3 +1,4 @@
+#!/usr/bin/python
 ###################################
 # pyRoast - Coffee roasting profile
 # (C) Andrew Tridgell 2009
@@ -12,11 +13,25 @@ from PyQt4.QtGui import QFileDialog
 
 # a few constants
 gTempArraySize = 5
-gUpdateFrequency = 0.5
+gUpdateFrequency = 0.2
 gPlotColor = QtGui.QColor(255, 128, 128)
 gProfileColor = QtGui.QColor(10, 50, 255)
 gMaxTime = 30.0
 gMaxTemp = 300
+gVersion = "0.1"
+
+#############################
+# current time in mm:ss form
+def TimeString():
+    elapsed = (time.time() - StartTime)/60.0
+    return ("%2u:%02u" % (int(elapsed), (elapsed - int(elapsed))*60))
+    
+
+############################
+# write a message to the msg
+# window, prefixed by the time
+def AddMessage(m):
+    ui.tMessages.append(TimeString() + " " + m)
 
 ############################
 # reset the plot
@@ -27,6 +42,7 @@ def bReset():
     CurrentTemperature = 0
     MaxTemperature = 0
     TemperatureArray = []
+    ui.tMessages.setText("")
     ui.TemperaturePlot.update()
 
 ############################
@@ -35,6 +51,7 @@ def bEvent(estring):
     global StartTime
     elapsed = (time.time() - StartTime)/60.0
     dmmPlot.addPoint(elapsed, CurrentTemperature, estring)
+    AddMessage(estring)
 
 def bFirstCrack():
     bEvent("First crack")
@@ -47,6 +64,9 @@ def bSecondCrack():
 
 def bRollingSecondCrack():
     bEvent("Rolling second crack")
+
+def bUnload():
+    bEvent("Unload")
 
 ###########################
 # useful fn to see if a string
@@ -63,7 +83,9 @@ def isNumber(s):
 # as a profile plot
 def bLoadProfile():
     global LoadedProfile
-    filename=QFileDialog.getOpenFileName(pyRoast, "Profile File", "", "*.csv")
+    filename = QFileDialog.getOpenFileName(pyRoast, "Profile File", "", "*.csv")
+    if (filename == ""):
+        return
     reader = csv.reader(open(filename))
     LoadedProfile.clearPoints()
     for p in reader:
@@ -80,16 +102,28 @@ def bSave():
     points = dmmPlot.points()
     fname = str(ui.tFileName.text());
     if (fname == ""):
-        print "Please choose a file name"
+        AddMessage("Please choose a file name")
         return
     if (fname.find('.') == -1):
         fname += ".csv";
     f = open(fname, 'w')
-    print "Saving %u points to %s" % (len(points), fname)
+    AddMessage("Saving %u points to \"%s\"" % (len(points), fname))
     f.write("Time,Temperature,Event\n");
     for p in points:
         f.write("%f,%f,\"%s\"\n" % (p.x()*60.0, p.y(), p.label()))
     f.close()
+
+#############################
+# save using a file dialog
+def bSaveAs():
+    filename = QFileDialog.getOpenFileName(pyRoast, "Profile File", "", "*.csv")
+    if (filename):
+        #filename = os.path.relpath(filename)
+        filename = str(filename)
+        if (os.path.dirname(filename) == os.path.realpath(os.curdir)):
+            filename = os.path.basename(filename)
+        ui.tFileName.setText(filename)
+        bSave()
 
 ###############
 # shutdown
@@ -149,7 +183,7 @@ def MapDigit(d):
     if (d & 0x10):
         ret += "."
     if (not digitMap[d & 0xEF]):
-        print "Bad digit: %02x" % d
+        AddMessage("Bad digit: %02x" % d)
         
     ret += digitMap[d & 0xEF]
     return ret
@@ -176,8 +210,13 @@ def CheckDMMInput():
         line = dmm.stdout.readline().strip(" \n\r")
         s = line.split(" ")
         if len(s) != 15:
-            print "Invalid DMM data: " + line
+            AddMessage("Invalid DMM data: " + line)
             return
+        if (s[12] != "BF" or s[13] != "6E" or s[14] != "6C"):
+            AddMessage("DMM not in temperature mode: " + line)
+            return
+
+        # oh what a strange format the data is in ...
         d1 = int(s[11][0] + s[4][0], 16)
         d2 = int(s[10][0] + s[7][0], 16)
         d3 = int(s[8][0]  + s[6][0], 16)
@@ -195,7 +234,7 @@ def CheckDMMInput():
             ui.tMaxTemperature.setText("%.1f" % MaxTemperature)
             ui.tRateOfChange.setText(("%.1f" + u'\N{DEGREE SIGN}' + "C/m") % RateOfChange())
         except:
-            print "Bad DMM digits %02x %02x %02x %02x" % (d1, d2, d3, d4)
+            AddMessage("Bad DMM digits %02x %02x %02x %02x" % (d1, d2, d3, d4))
 
 
 
@@ -207,6 +246,7 @@ def tick():
     CheckDMMInput()
     if (CurrentTemperature != 0):
         dmmPlot.addPoint(elapsed, CurrentTemperature, "")
+    ui.tElapsed.setText(TimeString());
     ui.TemperaturePlot.update()
     threading.Timer(gUpdateFrequency, tick).start()
 
@@ -243,6 +283,7 @@ if __name__ == "__main__":
     # connect up the buttons
     QtCore.QObject.connect(ui.bQuit, QtCore.SIGNAL("clicked()"), bQuit)
     QtCore.QObject.connect(ui.bSave, QtCore.SIGNAL("clicked()"), bSave)
+    QtCore.QObject.connect(ui.bSaveAs, QtCore.SIGNAL("clicked()"), bSaveAs)
     QtCore.QObject.connect(ui.bReset, QtCore.SIGNAL("clicked()"), bReset)
     QtCore.QObject.connect(ui.bLoadProfile, QtCore.SIGNAL("clicked()"), bLoadProfile)
     QtCore.QObject.connect(ui.bFirstCrack, QtCore.SIGNAL("clicked()"), bFirstCrack)
@@ -251,6 +292,7 @@ if __name__ == "__main__":
     QtCore.QObject.connect(ui.bSecondCrack, QtCore.SIGNAL("clicked()"), bSecondCrack)
     QtCore.QObject.connect(ui.bRollingSecondCrack,
                            QtCore.SIGNAL("clicked()"), bRollingSecondCrack)
+    QtCore.QObject.connect(ui.bUnload, QtCore.SIGNAL("clicked()"), bUnload)
 
     # setup a one-second update
     threading.Timer(gUpdateFrequency, tick).start()
@@ -266,6 +308,8 @@ if __name__ == "__main__":
 
     # set a default file name
     ChooseDefaultFileName()
+
+    AddMessage("Welcome to pyRoast " + gVersion);
 
     pyRoast.show()
     sys.exit(app.exec_())
