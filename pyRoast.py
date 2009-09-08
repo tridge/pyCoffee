@@ -309,6 +309,8 @@ if __name__ == "__main__":
     # set a default file name
     ChooseDefaultFileName()
 
+    ui.CSLogo.setPixmap(QtGui.QPixmap('cslogo.png'))
+
     AddMessage("Welcome to pyRoast " + gVersion);
 
     pyRoast.show()

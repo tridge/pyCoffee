@@ -35,7 +35,7 @@
    <layout class="QGridLayout" name="gridLayout_2">
     <item row="0" column="0">
      <layout class="QGridLayout" name="gridLayout">
-      <item row="0" column="0" colspan="2">
+      <item row="0" column="0" colspan="3">
        <widget class="KPlotWidget" name="TemperaturePlot">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
@@ -45,8 +45,8 @@
         </property>
         <property name="minimumSize">
          <size>
-          <width>800</width>
-          <height>600</height>
+          <width>600</width>
+          <height>400</height>
          </size>
         </property>
         <property name="maximumSize">
@@ -76,6 +76,23 @@
         </property>
        </widget>
       </item>
+      <item row="1" column="2">
+       <widget class="KTextBrowser" name="tMessages"/>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLabel" name="CSLogo">
+        <property name="maximumSize">
+         <size>
+          <width>171</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Thanks to
+CoffeeSnobs!</string>
+        </property>
+       </widget>
+      </item>
       <item row="1" column="0">
        <widget class="QGroupBox" name="groupBox">
         <property name="sizePolicy">
@@ -86,7 +103,7 @@
         </property>
         <property name="minimumSize">
          <size>
-          <width>700</width>
+          <width>590</width>
           <height>231</height>
          </size>
         </property>
@@ -107,7 +124,7 @@
           <rect>
            <x>0</x>
            <y>180</y>
-           <width>481</width>
+           <width>562</width>
            <height>51</height>
           </rect>
          </property>
@@ -314,7 +331,7 @@ Second Crack</string>
           <rect>
            <x>0</x>
            <y>140</y>
-           <width>641</width>
+           <width>581</width>
            <height>41</height>
           </rect>
          </property>
@@ -378,9 +395,6 @@ Second Crack</string>
          </layout>
         </widget>
        </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="KTextBrowser" name="tMessages"/>
       </item>
      </layout>
     </item>
