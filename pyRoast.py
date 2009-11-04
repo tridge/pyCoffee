@@ -345,8 +345,11 @@ def usage():
     print """
 Usage: pyRoast.py [options]
 Options:
-  -h              show this help
-  --stdin	  get temperature from stdin
+  -h                   show this help
+  --stdin	       get temperature from stdin
+  --profile PROFILE    preload a profile
+  --pcontrol FILE      send PID power control to FILE
+  --smooth N	       smooth temperature over N values
 """
     
 
