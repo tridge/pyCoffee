@@ -10,7 +10,7 @@ import threading, time, os, subprocess, signal, select, csv
 from PyKDE4.kio import KFileDialog
 from PyKDE4.kdecore import KUrl
 from PyQt4.QtGui import QFileDialog
-import getopt, sys
+import getopt, sys, serial
 
 # a few constants
 gTempArraySize = 5
@@ -23,15 +23,14 @@ gVersion = "0.1"
 rmr = "../rmr.exe"
 stdin_temp = False
 pcontrol = None
-profile_file = None
-pcontrol_file = None
+pcontrol_dev = None
 
 PID_integral = 0
 PID_previous_error = 0
 PID_lastt = 0
-PID_Kp = 1
-PID_Ki = 0.01
-PID_Kd = 0.001
+PID_Kp = 5
+PID_Ki = 0.0
+PID_Kd = 1.0
 
 #############################
 # current time in mm:ss form
@@ -163,6 +162,9 @@ def bQuit():
     # kill off the meter reader child
     if (not stdin_temp):
         os.kill(dmm.pid, signal.SIGTERM)
+    if (pcontrol is not None):
+        pcontrol.write("0%\r\n")
+        pcontrol.setDTR(0)
     pyRoast.close()
 
 ################
@@ -177,7 +179,7 @@ def SetupPlot(plot, dmmPlot, profile):
 
 def PidControl():
     global CurrentTemperature, PID_integral, PID_previous_error
-    global PID_lastt, StartTime, pcontrol_file
+    global PID_lastt, StartTime, pcontrol
     
     elapsed = (time.time() - StartTime)/60.0
     target=ProfileTemperature()
@@ -189,21 +191,22 @@ def PidControl():
     PID_integral = PID_integral + (error*dt)
     derivative = (error - PID_previous_error)/dt
     output = (PID_Kp*error) + (PID_Ki*PID_integral) + (PID_Kd*derivative)
+    print "dt=%f Kp_term=%f Ki_term=%f Kd_term=%f" % (dt,PID_Kp*error,PID_Ki*PID_integral,PID_Kd*derivative)
     PID_previous_error = error
     PID_lastt = elapsed
 
     # map output into power level.
     # testing shows that 50% means keep at current temp
-    power = (output*3) + 50.0
+    power = output + 50.0
     if (power > 100):
         power = 100
     elif (power < 0):
         power = 0
     
-    print "target=%f PID Output %f power=%f" % (target, output, power)
-    if (pcontrol_file is not None):
-        print >>pcontrol_file, "%u%%" % power
-        pcontrol_file.flush()
+    if (pcontrol is not None):
+        print "current=%f target=%f PID Output %f power=%f" % (CurrentTemperature, target, output, power)
+        pcontrol.write("%u%%\r\n" % power)
+
 
 ####################
 # called when we get a temp value
@@ -340,6 +343,17 @@ def ChooseDefaultFileName():
        fname = time.strftime("%Y%m%d") + "-" + str(i) + ".csv";
     ui.tFileName.setText(fname)
 
+############################
+# open a serial port for 
+# power control
+def PcontrolOpen(file):
+    s = serial.Serial(file, 9600, parity='N', rtscts=False, 
+                      xonxoff=False, timeout=1.0)
+    time.sleep(0.2)
+    s.setDTR(1)
+    return s
+
+
 #############################
 def usage():
     print """
@@ -378,7 +392,7 @@ if __name__ == "__main__":
         elif o in ("--profile"):
             profile_file = a
         elif o in ("--pcontrol"):
-            pcontrol = a
+            pcontrol_dev = a
         else:
             assert False, "unhandled option"
 
@@ -426,8 +440,8 @@ if __name__ == "__main__":
         dmm = subprocess.Popen(rmr, stdout=subprocess.PIPE)
         dmm_file = dmm.stdout
 
-    if (pcontrol is not None):
-        pcontrol_file = open(pcontrol, "w")
+    if (pcontrol_dev is not None):
+        pcontrol = PcontrolOpen(pcontrol_dev)
 
     # set a default file name
     ChooseDefaultFileName()
