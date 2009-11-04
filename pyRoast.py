@@ -10,6 +10,7 @@ import threading, time, os, subprocess, signal, select, csv
 from PyKDE4.kio import KFileDialog
 from PyKDE4.kdecore import KUrl
 from PyQt4.QtGui import QFileDialog
+import getopt, sys
 
 # a few constants
 gTempArraySize = 5
@@ -19,6 +20,18 @@ gProfileColor = QtGui.QColor(10, 50, 255)
 gMaxTime = 30.0
 gMaxTemp = 300
 gVersion = "0.1"
+rmr = "../rmr.exe"
+stdin_temp = False
+pcontrol = None
+profile_file = None
+pcontrol_file = None
+
+PID_integral = 0
+PID_previous_error = 0
+PID_lastt = 0
+PID_Kp = 1
+PID_Ki = 0.01
+PID_Kd = 0.001
 
 #############################
 # current time in mm:ss form
@@ -79,13 +92,23 @@ def isNumber(s):
     return True
 
 ###########################
+# work out the profile temperature
+# given a time
+def ProfileTemperature():
+    global StartTime
+    global LoadedProfile
+    elapsed = (time.time() - StartTime)/60.0
+    points = LoadedProfile.points()
+    for p in points:
+        if (p.x() >= elapsed):
+            return p.y()
+    return 0.0
+
+###########################
 # load an existing CSV
 # as a profile plot
-def bLoadProfile():
+def LoadProfile(filename):
     global LoadedProfile
-    filename = QFileDialog.getOpenFileName(pyRoast, "Profile File", "", "*.csv")
-    if (filename == ""):
-        return
     reader = csv.reader(open(filename))
     LoadedProfile.clearPoints()
     for p in reader:
@@ -95,6 +118,15 @@ def bLoadProfile():
                 label = ""
             LoadedProfile.addPoint(float(p[0])/60.0, float(p[1]), label);
     ui.TemperaturePlot.update()
+
+###########################
+# load a profile via GUI
+def bLoadProfile():
+    global LoadedProfile
+    filename = QFileDialog.getOpenFileName(pyRoast, "Profile File", "", "*.csv")
+    if (filename == ""):
+        return
+    LoadProfile(filename)
     
 ###########################
 # save the data
@@ -129,7 +161,8 @@ def bSaveAs():
 # shutdown
 def bQuit():
     # kill off the meter reader child
-    os.kill(dmm.pid, signal.SIGTERM)
+    if (not stdin_temp):
+        os.kill(dmm.pid, signal.SIGTERM)
     pyRoast.close()
 
 ################
@@ -142,6 +175,51 @@ def SetupPlot(plot, dmmPlot, profile):
     plot.addPlotObject(dmmPlot)
     plot.addPlotObject(profile)
 
+def PidControl():
+    global CurrentTemperature, PID_integral, PID_previous_error
+    global PID_lastt, StartTime, pcontrol_file
+    
+    elapsed = (time.time() - StartTime)/60.0
+    target=ProfileTemperature()
+    dt = elapsed - PID_lastt
+    if (dt < 0.01):
+        return
+    
+    error = target - CurrentTemperature
+    PID_integral = PID_integral + (error*dt)
+    derivative = (error - PID_previous_error)/dt
+    output = (PID_Kp*error) + (PID_Ki*PID_integral) + (PID_Kd*derivative)
+    PID_previous_error = error
+    PID_lastt = elapsed
+
+    # map output into power level.
+    # testing shows that 50% means keep at current temp
+    power = (output*3) + 50.0
+    if (power > 100):
+        power = 100
+    elif (power < 0):
+        power = 0
+    
+    print "target=%f PID Output %f power=%f" % (target, output, power)
+    if (pcontrol_file is not None):
+        print >>pcontrol_file, "%u%%" % power
+        pcontrol_file.flush()
+
+####################
+# called when we get a temp value
+def GotTemperature(temp):
+    global CurrentTemperature, MaxTemperature
+    if (len(TemperatureArray) >= gTempArraySize):
+        del TemperatureArray[:1]
+    TemperatureArray.append(temp)
+    CurrentTemperature = sum(TemperatureArray) / len(TemperatureArray)
+    if (CurrentTemperature > MaxTemperature):
+        MaxTemperature = CurrentTemperature
+    ui.tCurrentTemperature.setText("%.1f" % CurrentTemperature)
+    ui.tMaxTemperature.setText("%.1f" % MaxTemperature)
+    ui.tRateOfChange.setText(("%.1f" + u'\N{DEGREE SIGN}' + "C/m") % RateOfChange())
+    PidControl()
+                
 #################################
 # map the strange hex formatted
 # DMM digits for a Victor 86B DMM
@@ -206,9 +284,16 @@ def RateOfChange():
 # check for input from the DMM
 def CheckDMMInput():
     global CurrentTemperature, MaxTemperature
-    while (select.select([dmm.stdout], [], [], 0)[0]):
-        line = dmm.stdout.readline().strip(" \n\r")
+    while (select.select([dmm_file], [], [], 0)[0]):
+        line = dmm_file.readline().strip(" \n\r")
         s = line.split(" ")
+        if (stdin_temp):
+            if len(s) != 1:
+                AddMessage("Invalid DMM data: " + line)
+                return
+            GotTemperature(int(s[0]))
+            return
+            
         if len(s) != 15:
             AddMessage("Invalid DMM data: " + line)
             return
@@ -224,19 +309,13 @@ def CheckDMMInput():
         d3 ^= 0x10
         try:
             temp = float(MapDigit(d1) + MapDigit(d2) + MapDigit(d3) + MapDigit(d4))
-            if (len(TemperatureArray) >= gTempArraySize):
-                del TemperatureArray[:1]
-            TemperatureArray.append(temp)
-            CurrentTemperature = sum(TemperatureArray) / len(TemperatureArray)
-            if (CurrentTemperature > MaxTemperature):
-                MaxTemperature = CurrentTemperature
-            ui.tCurrentTemperature.setText("%.1f" % CurrentTemperature)
-            ui.tMaxTemperature.setText("%.1f" % MaxTemperature)
-            ui.tRateOfChange.setText(("%.1f" + u'\N{DEGREE SIGN}' + "C/m") % RateOfChange())
+            GotTemperature(temp)
+
         except:
             AddMessage("Bad DMM digits %02x %02x %02x %02x" % (d1, d2, d3, d4))
 
-
+    if (stdin_temp):
+        GotTemperature(CurrentTemperature)
 
 ############################
 # called once a second
@@ -261,11 +340,45 @@ def ChooseDefaultFileName():
        fname = time.strftime("%Y%m%d") + "-" + str(i) + ".csv";
     ui.tFileName.setText(fname)
 
+#############################
+def usage():
+    print """
+Usage: pyRoast.py [options]
+Options:
+  -h              show this help
+  --stdin	  get temperature from stdin
+"""
+    
 
 ############################################
 # main program
 if __name__ == "__main__":
     import sys
+
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "h",
+                                   ["stdin", "help", "smooth=", "pcontrol=",
+                                    "profile="])
+    except getopt.GetoptError, err:
+        print str(err)
+        usage()
+        sys.exit(2)
+
+    for o,a in opts:
+        if o in ("-h", "--help"):
+            usage()
+            sys.exit(1)
+        elif o in ("--stdin"):
+            stdin_temp = True
+        elif o in ("--smooth"):
+            gTempArraySize = int(a)
+        elif o in ("--profile"):
+            profile_file = a
+        elif o in ("--pcontrol"):
+            pcontrol = a
+        else:
+            assert False, "unhandled option"
+
     app = QtGui.QApplication(sys.argv)
     pyRoast = QtGui.QMainWindow()
     ui = Ui_pyRoast()
@@ -304,12 +417,22 @@ if __name__ == "__main__":
     MaxTemperature = 0.0
 
     # start the dmm child
-    dmm = subprocess.Popen("../rmr.exe", stdout=subprocess.PIPE)
+    if (stdin_temp):
+        dmm_file = sys.stdin
+    else:
+        dmm = subprocess.Popen(rmr, stdout=subprocess.PIPE)
+        dmm_file = dmm.stdout
+
+    if (pcontrol is not None):
+        pcontrol_file = open(pcontrol, "w")
 
     # set a default file name
     ChooseDefaultFileName()
 
     ui.CSLogo.setPixmap(QtGui.QPixmap('cslogo.png'))
+
+    if (profile_file is not None):
+        LoadProfile(profile_file)
 
     AddMessage("Welcome to pyRoast " + gVersion);
 
