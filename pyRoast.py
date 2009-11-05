@@ -10,7 +10,7 @@ import threading, time, os, subprocess, signal, select, csv
 from PyKDE4.kio import KFileDialog
 from PyKDE4.kdecore import KUrl
 from PyQt4.QtGui import QFileDialog
-import getopt, sys, serial
+import getopt, sys, serial, math
 
 # a few constants
 gTempArraySize = 5
@@ -28,9 +28,10 @@ pcontrol_dev = None
 PID_integral = 0
 PID_previous_error = 0
 PID_lastt = 0
-PID_Kp = 5
-PID_Ki = 0.0
-PID_Kd = 1.0
+PID_Kp = 3
+PID_Ki = 1
+PID_Kd = 0.3
+PID_last_power = 0
 
 #############################
 # current time in mm:ss form
@@ -178,13 +179,20 @@ def SetupPlot(plot, dmmPlot, profile):
     plot.addPlotObject(profile)
 
 def PidControl():
-    global CurrentTemperature, PID_integral, PID_previous_error
+    global CurrentTemperature, PID_integral, PID_previous_error, PID_last_power
     global PID_lastt, StartTime, pcontrol
-    
+
+    current = CurrentTemperature
+    target = ProfileTemperature()
     elapsed = (time.time() - StartTime)/60.0
-    target=ProfileTemperature()
     dt = elapsed - PID_lastt
-    if (dt < 0.01):
+    # don't change the power level more than once every 2 seconds
+
+    current = ProfileTemperature() + 5
+    CurrentTemperature = current
+    target = 210
+
+    if (dt < 2/60.0):
         return
     
     error = target - CurrentTemperature
@@ -195,16 +203,22 @@ def PidControl():
     PID_previous_error = error
     PID_lastt = elapsed
 
+    # decay the integral component over 1 minute to 10%
+    decay = math.exp(dt*math.log(0.1))
+    PID_integral = PID_integral * decay
+    
+
     # map output into power level.
     # testing shows that 50% means keep at current temp
-    power = output + 50.0
+    power = int(output + PID_last_power)
     if (power > 100):
         power = 100
     elif (power < 0):
         power = 0
     
-    if (pcontrol is not None):
-        print "current=%f target=%f PID Output %f power=%f" % (CurrentTemperature, target, output, power)
+    PID_last_power = power
+    print "current=%f target=%f PID Output %f power=%f" % (current, target, output, power)
+    if (pcontrol is not None and power != PID_last_power):
         pcontrol.write("%u%%\r\n" % power)
 
 
