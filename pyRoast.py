@@ -24,6 +24,7 @@ rmr = "../rmr.exe"
 stdin_temp = False
 pcontrol = None
 pcontrol_dev = None
+profile_file = None
 
 PID_integral = 0
 PID_previous_error = 0
@@ -160,6 +161,7 @@ def bSaveAs():
 ###############
 # shutdown
 def bQuit():
+    global pcontrol
     # kill off the meter reader child
     if (not stdin_temp):
         os.kill(dmm.pid, signal.SIGTERM)
@@ -188,10 +190,6 @@ def PidControl():
     dt = elapsed - PID_lastt
     # don't change the power level more than once every 2 seconds
 
-    current = ProfileTemperature() + 5
-    CurrentTemperature = current
-    target = 210
-
     if (dt < 2/60.0):
         return
     
@@ -199,7 +197,7 @@ def PidControl():
     PID_integral = PID_integral + (error*dt)
     derivative = (error - PID_previous_error)/dt
     output = (PID_Kp*error) + (PID_Ki*PID_integral) + (PID_Kd*derivative)
-    print "dt=%f Kp_term=%f Ki_term=%f Kd_term=%f" % (dt,PID_Kp*error,PID_Ki*PID_integral,PID_Kd*derivative)
+#    AddMessage("dt=%f Kp_term=%f Ki_term=%f Kd_term=%f" % (dt,PID_Kp*error,PID_Ki*PID_integral,PID_Kd*derivative))
     PID_previous_error = error
     PID_lastt = elapsed
 
@@ -216,10 +214,15 @@ def PidControl():
     elif (power < 0):
         power = 0
     
-    PID_last_power = power
-    print "current=%f target=%f PID Output %f power=%f" % (current, target, output, power)
+#    AddMessage("current=%f target=%f PID Output %f power=%f" % (current, target, output, power))
+    if (pcontrol is None):
+        print "pcontrol is None"
+    if (power == PID_last_power):
+        print "power unchanged"
     if (pcontrol is not None and power != PID_last_power):
+        AddMessage("setting power to " + str(power))
         pcontrol.write("%u%%\r\n" % power)
+    PID_last_power = power
 
 
 ####################
@@ -455,6 +458,7 @@ if __name__ == "__main__":
         dmm_file = dmm.stdout
 
     if (pcontrol_dev is not None):
+        AddMessage("opening power control " + pcontrol_dev);
         pcontrol = PcontrolOpen(pcontrol_dev)
 
     # set a default file name
