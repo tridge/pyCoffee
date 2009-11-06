@@ -215,10 +215,6 @@ def PidControl():
         power = 0
     
 #    AddMessage("current=%f target=%f PID Output %f power=%f" % (current, target, output, power))
-    if (pcontrol is None):
-        print "pcontrol is None"
-    if (power == PID_last_power):
-        print "power unchanged"
     if (pcontrol is not None and power != PID_last_power):
         AddMessage("setting power to " + str(power))
         pcontrol.write("%u%%\r\n" % power)
