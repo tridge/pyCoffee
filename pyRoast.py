@@ -14,17 +14,18 @@ import getopt, sys, serial, math
 
 # a few constants
 gTempArraySize = 5
-gUpdateFrequency = 0.2
+gUpdateFrequency = 0.5
 gPlotColor = QtGui.QColor(255, 128, 128)
 gProfileColor = QtGui.QColor(10, 50, 255)
 gMaxTime = 30.0
 gMaxTemp = 300
 gVersion = "0.1"
 rmr = "../rmr.exe"
-stdin_temp = False
+simulate_temp = False
 pcontrol = None
 pcontrol_dev = None
 profile_file = None
+verbose = False
 
 PID_integral = 0
 PID_previous_error = 0
@@ -32,7 +33,11 @@ PID_lastt = 0
 PID_Kp = 3
 PID_Ki = 1
 PID_Kd = 0.3
-PID_last_power = 0
+current_power = 100
+
+sim_last_time = 0
+sim_last_temp = 0
+sim_base_temp = 29.0
 
 #############################
 # current time in mm:ss form
@@ -46,6 +51,11 @@ def TimeString():
 # window, prefixed by the time
 def AddMessage(m):
     ui.tMessages.append(TimeString() + " " + m)
+
+def DebugMessage(m):
+    global verbose
+    if (verbose):
+        AddMessage(m)
 
 ############################
 # reset the plot
@@ -163,7 +173,7 @@ def bSaveAs():
 def bQuit():
     global pcontrol
     # kill off the meter reader child
-    if (not stdin_temp):
+    if (not simulate_temp):
         os.kill(dmm.pid, signal.SIGTERM)
     if (pcontrol is not None):
         pcontrol.write("0%\r\n")
@@ -181,7 +191,7 @@ def SetupPlot(plot, dmmPlot, profile):
     plot.addPlotObject(profile)
 
 def PidControl():
-    global CurrentTemperature, PID_integral, PID_previous_error, PID_last_power
+    global CurrentTemperature, PID_integral, PID_previous_error, current_power
     global PID_lastt, StartTime, pcontrol
 
     current = CurrentTemperature
@@ -208,17 +218,24 @@ def PidControl():
 
     # map output into power level.
     # testing shows that 50% means keep at current temp
-    power = int(output + PID_last_power)
+    power = int(output + current_power)
     if (power > 100):
         power = 100
     elif (power < 0):
         power = 0
-    
-#    AddMessage("current=%f target=%f PID Output %f power=%f" % (current, target, output, power))
-    if (pcontrol is not None and power != PID_last_power):
+
+    if (ui.cAutoPower.isChecked()):
+        DebugMessage("current=%f target=%f PID Output %f power=%f" % (current, target, output, power))
+    else:
+        power = ui.sPowerSlider.value()
+    if (power != current_power):
         AddMessage("setting power to " + str(power))
-        pcontrol.write("%u%%\r\n" % power)
-    PID_last_power = power
+        if (pcontrol is not None):
+            pcontrol.write("%u%%\r\n" % power)
+    current_power = power
+    ui.tPower.clear()
+    ui.tPower.setText("%3u%%" % current_power)
+    ui.sPowerSlider.setValue(current_power)
 
 
 ####################
@@ -296,19 +313,38 @@ def RateOfChange():
         return 0
     return (y2-y1)/(x2-x1)
 
+def DeltaT(T, P, Tbase):
+    r=0.01
+    k=0.5
+    return r*(P-(k*(T-Tbase)))
+
+############################
+# simulate temperature profile
+def SimulateTemperature():
+    global sim_last_time, sim_last_temp, sim_base_temp
+    if (sim_last_time == 0):
+        sim_last_time = time.time()
+        sim_last_temp = sim_base_temp
+        GotTemperature(sim_last_temp)
+        return
+    t = time.time()
+    elapsed = (t - sim_last_time)
+    sim_last_time = t
+    sim_last_temp += DeltaT(sim_last_temp, current_power, sim_base_temp) * elapsed
+    DebugMessage(("sim_last_temp=%.2f current_power=%.2f sim_base_temp=%.2f elapsed=%.2f DeltaT=%.2f" % (sim_last_temp, current_power, sim_base_temp, elapsed, DeltaT(sim_last_temp, current_power, sim_base_temp))))
+    GotTemperature(sim_last_temp)
+
+
 ############################
 # check for input from the DMM
 def CheckDMMInput():
     global CurrentTemperature, MaxTemperature
+    if (simulate_temp):
+        SimulateTemperature()
+        return
     while (select.select([dmm_file], [], [], 0)[0]):
         line = dmm_file.readline().strip(" \n\r")
         s = line.split(" ")
-        if (stdin_temp):
-            if len(s) != 1:
-                AddMessage("Invalid DMM data: " + line)
-                return
-            GotTemperature(int(s[0]))
-            return
             
         if len(s) != 15:
             AddMessage("Invalid DMM data: " + line)
@@ -330,8 +366,6 @@ def CheckDMMInput():
         except:
             AddMessage("Bad DMM digits %02x %02x %02x %02x" % (d1, d2, d3, d4))
 
-    if (stdin_temp):
-        GotTemperature(CurrentTemperature)
 
 ############################
 # called once a second
@@ -373,7 +407,8 @@ def usage():
 Usage: pyRoast.py [options]
 Options:
   -h                   show this help
-  --stdin	       get temperature from stdin
+  --verbose	       verbose messages
+  --simulate	       simulate temperature readings
   --profile PROFILE    preload a profile
   --pcontrol FILE      send PID power control to FILE
   --smooth N	       smooth temperature over N values
@@ -387,8 +422,8 @@ if __name__ == "__main__":
 
     try:
         opts, args = getopt.getopt(sys.argv[1:], "h",
-                                   ["stdin", "help", "smooth=", "pcontrol=",
-                                    "profile="])
+                                   ["help", "smooth=", "pcontrol=",
+                                    "profile=", "simulate", "verbose"])
     except getopt.GetoptError, err:
         print str(err)
         usage()
@@ -398,8 +433,10 @@ if __name__ == "__main__":
         if o in ("-h", "--help"):
             usage()
             sys.exit(1)
-        elif o in ("--stdin"):
-            stdin_temp = True
+        elif o in ("--verbose"):
+            verbose = True
+        elif o in ("--simulate"):
+            simulate_temp = True
         elif o in ("--smooth"):
             gTempArraySize = int(a)
         elif o in ("--profile"):
@@ -445,11 +482,13 @@ if __name__ == "__main__":
     TemperatureArray = []
     CurrentTemperature = 0.0
     MaxTemperature = 0.0
+    current_power = 0
+    
+    ui.tPower.setText("%3u%%" % current_power)
+    ui.sPowerSlider.setValue(current_power)
 
     # start the dmm child
-    if (stdin_temp):
-        dmm_file = sys.stdin
-    else:
+    if (not simulate_temp):
         dmm = subprocess.Popen(rmr, stdout=subprocess.PIPE)
         dmm_file = dmm.stdout
 
