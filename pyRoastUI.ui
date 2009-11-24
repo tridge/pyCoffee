@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1119</width>
-    <height>953</height>
+    <width>1024</width>
+    <height>793</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -27,7 +27,7 @@
   </property>
   <widget class="QWidget" name="centralwidget">
    <property name="sizePolicy">
-    <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+    <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
      <horstretch>1</horstretch>
      <verstretch>1</verstretch>
     </sizepolicy>
@@ -46,7 +46,7 @@
         <property name="minimumSize">
          <size>
           <width>600</width>
-          <height>400</height>
+          <height>300</height>
          </size>
         </property>
         <property name="maximumSize">
@@ -104,7 +104,7 @@ CoffeeSnobs!</string>
         <property name="minimumSize">
          <size>
           <width>590</width>
-          <height>300</height>
+          <height>270</height>
          </size>
         </property>
         <property name="maximumSize">
@@ -513,7 +513,7 @@ Second Crack</string>
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1119</width>
+     <width>1024</width>
      <height>27</height>
     </rect>
    </property>
