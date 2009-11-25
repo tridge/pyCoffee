@@ -230,8 +230,8 @@ def PidControl():
         power = ui.sPowerSlider.value()
     if (power != current_power):
         AddMessage("setting power to " + str(power))
-        if (pcontrol is not None):
-            pcontrol.write("%u%%\r\n" % power)
+    if (pcontrol is not None):
+        pcontrol.write("%u%%\r\n" % power)
     current_power = power
     ui.tPower.clear()
     ui.tPower.setText("%3u%%" % current_power)
