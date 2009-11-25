@@ -321,17 +321,27 @@ def DeltaT(T, P, Tbase):
 ############################
 # simulate temperature profile
 def SimulateTemperature():
-    global sim_last_time, sim_last_temp, sim_base_temp
+    global sim_last_time, sim_last_temp, sim_base_temp, StartTime
+    global PowerArray;
     if (sim_last_time == 0):
         sim_last_time = time.time()
         sim_last_temp = sim_base_temp
         GotTemperature(sim_last_temp)
+        PowerArray = {};
         return
     t = time.time()
+    telapsed = int(t - StartTime)
+    PowerArray[str(telapsed)] = current_power;
+    if (PowerArray.has_key(str(telapsed-10))):
+        del PowerArray[str(telapsed-10)]
+    power = 0
+    for i in range(1,10):
+        if (PowerArray.has_key(str(telapsed-i))):
+            power += PowerArray[str(telapsed-i)] / 10
     elapsed = (t - sim_last_time)
     sim_last_time = t
-    sim_last_temp += DeltaT(sim_last_temp, current_power, sim_base_temp) * elapsed
-    DebugMessage(("sim_last_temp=%.2f current_power=%.2f sim_base_temp=%.2f elapsed=%.2f DeltaT=%.2f" % (sim_last_temp, current_power, sim_base_temp, elapsed, DeltaT(sim_last_temp, current_power, sim_base_temp))))
+    sim_last_temp += DeltaT(sim_last_temp, power, sim_base_temp) * elapsed
+    DebugMessage(("sim_last_temp=%.2f current_power=%.2f sim_base_temp=%.2f elapsed=%.2f DeltaT=%.2f" % (sim_last_temp, current_power, sim_base_temp, elapsed, DeltaT(sim_last_temp, power, sim_base_temp))))
     GotTemperature(sim_last_temp)
 
 
