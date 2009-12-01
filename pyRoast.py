@@ -316,15 +316,19 @@ def MapDigit(d):
 # work out the rate of change
 # of the temperature
 def RateOfChange():
-    if (len(dmmPlot.points()) < 10):
+    if (len(dmmPlot.points()) < 12):
         return 0
-    y2 = dmmPlot.points()[-1].y()
-    y1 = dmmPlot.points()[-10].y()
-    x2 = dmmPlot.points()[-1].x()
-    x1 = dmmPlot.points()[-10].x()
+    x2 = dmmPlot.points()[-3].x()
+    x1 = dmmPlot.points()[-9].x()
     if (x2 == x1):
         return 0
-    return (y2-y1)/(x2-x1)
+    sum1 = 0
+    sum2 = 0
+    for i in range(-11,-7):
+        sum1 += dmmPlot.points()[i].y()
+    for i in range(-5,-1):
+        sum2 += dmmPlot.points()[i].y()
+    return (sum2-sum1)/(x2-x1)
 
 def DeltaT(T, P, Tbase):
     r=0.01
