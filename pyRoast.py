@@ -6,7 +6,7 @@
 
 from pyRoastUI import *
 from PyKDE4.kdeui import KPlotObject
-import threading, time, os, subprocess, signal, select, csv
+import time, os, subprocess, signal, select, csv
 from PyKDE4.kio import KFileDialog
 from PyKDE4.kdecore import KUrl
 from PyQt4.QtGui import QFileDialog
@@ -14,7 +14,7 @@ import getopt, sys, serial, math
 
 # a few constants
 gTempArraySize = 5
-gUpdateFrequency = 0.5
+gUpdateFrequency = 0.1
 gPlotColor = QtGui.QColor(255, 128, 128)
 gProfileColor = QtGui.QColor(10, 50, 255)
 gMaxTime = 30.0
@@ -27,6 +27,7 @@ pcontrol = None
 pcontrol_dev = None
 profile_file = None
 verbose = False
+target_temp = 0
 
 PID_integral = 0
 PID_previous_error = 0
@@ -197,10 +198,13 @@ def SetupPlot(plot, dmmPlot, profile):
 
 def PidControl():
     global CurrentTemperature, PID_integral, PID_previous_error, current_power
-    global PID_lastt, pcontrol
+    global PID_lastt, pcontrol, target_temp
 
     current = CurrentTemperature
-    target = ProfileTemperature()
+    if (target_temp != 0):
+        target = target_temp
+    else:
+        target = ProfileTemperature()
     elapsed = ElapsedTime()/60.0
     dt = elapsed - PID_lastt
     # don't change the power level more than once every 2 seconds
@@ -236,8 +240,11 @@ def PidControl():
     if (power != current_power):
         AddMessage("setting power to " + str(power))
     if (pcontrol is not None):
-        pcontrol.write("%u%%\r\n" % power)
+        spower = power
+        if (spower >= 100):
+            spower = 99
         pcontrol.setDTR(1)
+        pcontrol.write("%u%%\r\n" % spower)
     current_power = power
     ui.tPower.clear()
     ui.tPower.setText("%3u%%" % current_power)
@@ -334,19 +341,25 @@ def SimulateTemperature():
         sim_last_temp = sim_base_temp
         GotTemperature(sim_last_temp)
         PowerArray = {};
-        PowerArraySize = 20 / time_speedup
+        PowerArraySize = 50
         return
     t = ElapsedTime()
     ielapsed = int(t)
+    elapsed = (t - sim_last_time)
+    # the CS DMM gives a value every 0.5 seconds
+    if (elapsed < 0.5):
+        return
+    sim_last_time = t
     PowerArray[str(ielapsed)] = current_power;
     if (PowerArray.has_key(str(ielapsed-PowerArraySize))):
         del PowerArray[str(ielapsed-PowerArraySize)]
     power = 0
+    count = 0
     for i in range(1,PowerArraySize):
         if (PowerArray.has_key(str(ielapsed-i))):
-            power += PowerArray[str(ielapsed-i)] / PowerArraySize
-    elapsed = (t - sim_last_time)
-    sim_last_time = t
+            power += PowerArray[str(ielapsed-i)]
+            count = count + 1
+    power = power / count
     sim_last_temp += DeltaT(sim_last_temp, power, sim_base_temp) * elapsed
     DebugMessage(("sim_last_temp=%.2f current_power=%.2f sim_base_temp=%.2f elapsed=%.2f DeltaT=%.2f" % (sim_last_temp, current_power, sim_base_temp, elapsed, DeltaT(sim_last_temp, power, sim_base_temp))))
     GotTemperature(sim_last_temp)
@@ -394,7 +407,6 @@ def tick():
         dmmPlot.addPoint(elapsed, CurrentTemperature, "")
     ui.tElapsed.setText(TimeString());
     ui.TemperaturePlot.update()
-    threading.Timer(gUpdateFrequency, tick).start()
 
 #############################
 # choose a reasonable default
@@ -441,7 +453,7 @@ if __name__ == "__main__":
         opts, args = getopt.getopt(sys.argv[1:], "h",
                                    ["help", "smooth=", "pcontrol=",
                                     "profile=", "simulate", "verbose",
-                                    "speedup="])
+                                    "speedup=", "target="])
     except getopt.GetoptError, err:
         print str(err)
         usage()
@@ -457,6 +469,8 @@ if __name__ == "__main__":
             simulate_temp = True
         elif o in ("--speedup"):
             time_speedup = int(a)
+        elif o in ("--target"):
+            target_temp = int(a)
         elif o in ("--smooth"):
             gTempArraySize = int(a)
         elif o in ("--profile"):
@@ -494,9 +508,10 @@ if __name__ == "__main__":
                            QtCore.SIGNAL("clicked()"), bRollingSecondCrack)
     QtCore.QObject.connect(ui.bUnload, QtCore.SIGNAL("clicked()"), bUnload)
 
-    # setup a one-second update
-    threading.Timer(gUpdateFrequency, tick).start()
-
+    ctimer = QtCore.QTimer()
+    QtCore.QObject.connect(ctimer, QtCore.SIGNAL("timeout()"), tick)
+    ctimer.start(int((1000 * gUpdateFrequency) / time_speedup))
+    
     # get the current time
     StartTime = time.time()
     TemperatureArray = []
@@ -506,7 +521,7 @@ if __name__ == "__main__":
     
     ui.tPower.setText("%3u%%" % current_power)
     ui.sPowerSlider.setValue(current_power)
-
+    ui.cAutoPower.setChecked(True)
     # start the dmm child
     if (not simulate_temp):
         dmm = subprocess.Popen(rmr, stdout=subprocess.PIPE)
