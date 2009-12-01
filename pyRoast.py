@@ -32,9 +32,9 @@ target_temp = 0
 PID_integral = 0
 PID_previous_error = 0
 PID_lastt = 0
-PID_Kp = 1.5
-PID_Ki = 0
-PID_Kd = 0.6
+PID_Kp = 0.5
+PID_Ki = 2
+PID_Kd = 0.8
 current_power = 100
 
 sim_last_time = 0
