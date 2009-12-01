@@ -22,6 +22,7 @@ gMaxTemp = 300
 gVersion = "0.1"
 rmr = "../rmr.exe"
 simulate_temp = False
+time_speedup = 1
 pcontrol = None
 pcontrol_dev = None
 profile_file = None
@@ -30,19 +31,25 @@ verbose = False
 PID_integral = 0
 PID_previous_error = 0
 PID_lastt = 0
-PID_Kp = 3
-PID_Ki = 1
-PID_Kd = 0.3
+PID_Kp = 1.5
+PID_Ki = 0
+PID_Kd = 0.6
 current_power = 100
 
 sim_last_time = 0
 sim_last_temp = 0
 sim_base_temp = 29.0
 
+######################
+# get the elapsed time
+def ElapsedTime():
+    global StartTime
+    return time_speedup*(time.time() - StartTime)
+
 #############################
 # current time in mm:ss form
 def TimeString():
-    elapsed = (time.time() - StartTime)/60.0
+    elapsed = ElapsedTime()/60.0
     return ("%2u:%02u" % (int(elapsed), (elapsed - int(elapsed))*60))
     
 
@@ -72,8 +79,7 @@ def bReset():
 ############################
 # called when a roast event comes on
 def bEvent(estring):
-    global StartTime
-    elapsed = (time.time() - StartTime)/60.0
+    elapsed = ElapsedTime()/60.0
     dmmPlot.addPoint(elapsed, CurrentTemperature, estring)
     AddMessage(estring)
 
@@ -106,9 +112,8 @@ def isNumber(s):
 # work out the profile temperature
 # given a time
 def ProfileTemperature():
-    global StartTime
     global LoadedProfile
-    elapsed = (time.time() - StartTime)/60.0
+    elapsed = ElapsedTime()/60.0
     points = LoadedProfile.points()
     for p in points:
         if (p.x() >= elapsed):
@@ -192,11 +197,11 @@ def SetupPlot(plot, dmmPlot, profile):
 
 def PidControl():
     global CurrentTemperature, PID_integral, PID_previous_error, current_power
-    global PID_lastt, StartTime, pcontrol
+    global PID_lastt, pcontrol
 
     current = CurrentTemperature
     target = ProfileTemperature()
-    elapsed = (time.time() - StartTime)/60.0
+    elapsed = ElapsedTime()/60.0
     dt = elapsed - PID_lastt
     # don't change the power level more than once every 2 seconds
 
@@ -321,23 +326,24 @@ def DeltaT(T, P, Tbase):
 ############################
 # simulate temperature profile
 def SimulateTemperature():
-    global sim_last_time, sim_last_temp, sim_base_temp, StartTime
-    global PowerArray;
+    global sim_last_time, sim_last_temp, sim_base_temp
+    global PowerArray, PowerArraySize;
     if (sim_last_time == 0):
-        sim_last_time = time.time()
+        sim_last_time = ElapsedTime()
         sim_last_temp = sim_base_temp
         GotTemperature(sim_last_temp)
         PowerArray = {};
+        PowerArraySize = 20 / time_speedup
         return
-    t = time.time()
-    telapsed = int(t - StartTime)
-    PowerArray[str(telapsed)] = current_power;
-    if (PowerArray.has_key(str(telapsed-10))):
-        del PowerArray[str(telapsed-10)]
+    t = ElapsedTime()
+    ielapsed = int(t)
+    PowerArray[str(ielapsed)] = current_power;
+    if (PowerArray.has_key(str(ielapsed-PowerArraySize))):
+        del PowerArray[str(ielapsed-PowerArraySize)]
     power = 0
-    for i in range(1,10):
-        if (PowerArray.has_key(str(telapsed-i))):
-            power += PowerArray[str(telapsed-i)] / 10
+    for i in range(1,PowerArraySize):
+        if (PowerArray.has_key(str(ielapsed-i))):
+            power += PowerArray[str(ielapsed-i)] / PowerArraySize
     elapsed = (t - sim_last_time)
     sim_last_time = t
     sim_last_temp += DeltaT(sim_last_temp, power, sim_base_temp) * elapsed
@@ -381,7 +387,7 @@ def CheckDMMInput():
 # called once a second
 def tick():
     global CurrentTemperature, StartTime
-    elapsed = (time.time() - StartTime)/60.0
+    elapsed = (ElapsedTime())/60.0
     CheckDMMInput()
     if (CurrentTemperature != 0):
         dmmPlot.addPoint(elapsed, CurrentTemperature, "")
@@ -433,7 +439,8 @@ if __name__ == "__main__":
     try:
         opts, args = getopt.getopt(sys.argv[1:], "h",
                                    ["help", "smooth=", "pcontrol=",
-                                    "profile=", "simulate", "verbose"])
+                                    "profile=", "simulate", "verbose",
+                                    "speedup="])
     except getopt.GetoptError, err:
         print str(err)
         usage()
@@ -447,6 +454,8 @@ if __name__ == "__main__":
             verbose = True
         elif o in ("--simulate"):
             simulate_temp = True
+        elif o in ("--speedup"):
+            time_speedup = int(a)
         elif o in ("--smooth"):
             gTempArraySize = int(a)
         elif o in ("--profile"):
