@@ -237,6 +237,7 @@ def PidControl():
         AddMessage("setting power to " + str(power))
     if (pcontrol is not None):
         pcontrol.write("%u%%\r\n" % power)
+        pcontrol.setDTR(1)
     current_power = power
     ui.tPower.clear()
     ui.tPower.setText("%3u%%" % current_power)
