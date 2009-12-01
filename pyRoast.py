@@ -196,7 +196,58 @@ def SetupPlot(plot, dmmPlot, profile):
     plot.addPlotObject(dmmPlot)
     plot.addPlotObject(profile)
 
-def PidControl():
+def PowerControl():
+    global CurrentTemperature, current_power
+    global pcontrol, target_temp
+
+    current = CurrentTemperature
+    if (target_temp != 0):
+        target = target_temp
+    else:
+        target = ProfileTemperature()
+    elapsed = ElapsedTime()/60.0
+    dt = elapsed - PID_lastt
+    # don't change the power level more than once every 2 seconds
+
+    if (dt < 2/60.0):
+        return
+    
+    error = target - CurrentTemperature
+    roc = RateOfChange()
+
+    power = current_power
+    # predict the temperature 20 seconds out
+    predict = error - (roc / 3.0)
+    if (error > 10):
+        power = 100
+    elif (error < -10):
+        power = 0
+    else:
+        power = power + (predict/20)
+        
+    if (power > 100):
+        power = 100
+    elif (power < 0):
+        power = 0
+
+    if (not ui.cAutoPower.isChecked()):
+        power = ui.sPowerSlider.value()
+    if (power != current_power):
+        AddMessage("setting power to " + str(power))
+    if (pcontrol is not None):
+        spower = power
+        # there seems to be a bug in the power controller for 100% power
+        if (spower >= 100):
+            spower = 99
+        pcontrol.setDTR(1)
+        pcontrol.write("%u%%\r\n" % spower)
+    current_power = power
+    ui.tPower.clear()
+    ui.tPower.setText("%3u%%" % current_power)
+    ui.sPowerSlider.setValue(current_power)
+
+
+def PID_PowerControl():
     global CurrentTemperature, PID_integral, PID_previous_error, current_power
     global PID_lastt, pcontrol, target_temp
 
@@ -251,6 +302,7 @@ def PidControl():
     ui.sPowerSlider.setValue(current_power)
 
 
+
 ####################
 # called when we get a temp value
 def GotTemperature(temp):
@@ -264,7 +316,7 @@ def GotTemperature(temp):
     ui.tCurrentTemperature.setText("%.1f" % CurrentTemperature)
     ui.tMaxTemperature.setText("%.1f" % MaxTemperature)
     ui.tRateOfChange.setText(("%.1f" + u'\N{DEGREE SIGN}' + "C/m") % RateOfChange())
-    PidControl()
+    PowerControl()
                 
 #################################
 # map the strange hex formatted
