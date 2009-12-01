@@ -14,7 +14,7 @@ import getopt, sys, serial, math
 
 # a few constants
 gTempArraySize = 5
-gUpdateFrequency = 0.1
+gUpdateFrequency = 0.25
 gPlotColor = QtGui.QColor(255, 128, 128)
 gProfileColor = QtGui.QColor(10, 50, 255)
 gMaxTime = 30.0
@@ -218,14 +218,14 @@ def PowerControl():
     roc = RateOfChange()
 
     power = current_power
-    # predict the temperature 20 seconds out
-    predict = error - (roc / 3.0)
+    # predict the temperature 1 minute out
+    predict = error - roc
     if (error > 10):
         power = 100
     elif (error < -10):
         power = 0
     else:
-        power = power + (predict/20)
+        power = power + (predict/15)
         
     if (power > 100):
         power = 100
@@ -234,15 +234,15 @@ def PowerControl():
 
     if (not ui.cAutoPower.isChecked()):
         power = ui.sPowerSlider.value()
-    if (power != current_power):
-        AddMessage("setting power to " + str(power))
+    if (int(power) != int(current_power)):
+        AddMessage("setting power to " + str(int(power)))
     if (pcontrol is not None):
         spower = power
         # there seems to be a bug in the power controller for 100% power
         if (spower >= 100):
             spower = 99
         pcontrol.setDTR(1)
-        pcontrol.write("%u%%\r\n" % spower)
+        pcontrol.write("%u%%\r\n" % int(spower))
     current_power = power
     ui.tPower.clear()
     ui.tPower.setText("%3u%%" % current_power)
@@ -370,19 +370,21 @@ def MapDigit(d):
 # work out the rate of change
 # of the temperature
 def RateOfChange():
-    if (len(dmmPlot.points()) < 12):
+    points = dmmPlot.points()
+    numpoints = len(points)
+    if (numpoints < 10):
         return 0
-    x2 = dmmPlot.points()[-3].x()
-    x1 = dmmPlot.points()[-9].x()
-    if (x2 == x1):
+    x1 = 0
+    x2 = points[-1].x()
+    y2 = points[-1].y()
+    for i in range(2,numpoints-2):
+        if (x2 - points[-i].x() > 5.0/60):
+            x1 = points[-i].x()
+            y1 = points[-i].y()
+            break;
+    if (x1 == 0):
         return 0
-    sum1 = 0
-    sum2 = 0
-    for i in range(-11,-7):
-        sum1 += dmmPlot.points()[i].y()
-    for i in range(-5,-1):
-        sum2 += dmmPlot.points()[i].y()
-    return (sum2-sum1)/(x2-x1)
+    return (y2-y1)/(x2-x1)
 
 def DeltaT(T, P, Tbase):
     r=0.01
