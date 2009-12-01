@@ -196,6 +196,8 @@ def SetupPlot(plot, dmmPlot, profile):
     plot.addPlotObject(dmmPlot)
     plot.addPlotObject(profile)
 
+###################################
+# adjust the amount of power to the heat gun 
 def PowerControl():
     global CurrentTemperature, current_power
     global pcontrol, target_temp
