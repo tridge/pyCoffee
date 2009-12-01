@@ -411,7 +411,7 @@ def SimulateTemperature():
         del PowerArray[str(ielapsed-PowerArraySize)]
     power = 0
     count = 0
-    for i in range(1,PowerArraySize):
+    for i in range(0,PowerArraySize):
         if (PowerArray.has_key(str(ielapsed-i))):
             power += PowerArray[str(ielapsed-i)]
             count = count + 1
