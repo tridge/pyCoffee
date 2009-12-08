@@ -68,8 +68,9 @@ def DebugMessage(m):
 ############################
 # reset the plot
 def bReset():
-    global StartTime, CurrentTemperature, MaxTemperature
+    global StartTime, CurrentTemperature, MaxTemperature, sim_last_time, TemperatureArray
     StartTime = time.time()
+    sim_last_time = 0
     dmmPlot.clearPoints()
     CurrentTemperature = 0
     MaxTemperature = 0
@@ -218,14 +219,9 @@ def PowerControl():
     roc = RateOfChange()
 
     power = current_power
-    # predict the temperature 1 minute out
-    predict = error - roc
-    if (error > 10):
-        power = 100
-    elif (error < -10):
-        power = 0
-    else:
-        power = power + (predict/15)
+    # predict the temperature 30 seconds
+    predict = error - (2*roc)
+    power = power + (predict/60)
         
     if (power > 100):
         power = 100
@@ -235,12 +231,10 @@ def PowerControl():
     if (not ui.cAutoPower.isChecked()):
         power = ui.sPowerSlider.value()
     if (int(power) != int(current_power)):
-        AddMessage("setting power to " + str(int(power)))
+        AddMessage("power => " + str(int(power)))
     if (pcontrol is not None):
         spower = power
         # there seems to be a bug in the power controller for 100% power
-        if (spower >= 100):
-            spower = 99
         pcontrol.setDTR(1)
         pcontrol.write("%u%%\r\n" % int(spower))
     current_power = power
@@ -294,8 +288,6 @@ def PID_PowerControl():
         AddMessage("setting power to " + str(power))
     if (pcontrol is not None):
         spower = power
-        if (spower >= 100):
-            spower = 99
         pcontrol.setDTR(1)
         pcontrol.write("%u%%\r\n" % spower)
     current_power = power
@@ -308,9 +300,11 @@ def PID_PowerControl():
 ####################
 # called when we get a temp value
 def GotTemperature(temp):
-    global CurrentTemperature, MaxTemperature
+    global CurrentTemperature, MaxTemperature, TemperatureArray
     if (len(TemperatureArray) >= gTempArraySize):
         del TemperatureArray[:1]
+    if (temp <= 0.0):
+        return
     TemperatureArray.append(temp)
     CurrentTemperature = sum(TemperatureArray) / len(TemperatureArray)
     if (CurrentTemperature > MaxTemperature):
@@ -384,16 +378,46 @@ def RateOfChange():
             break;
     if (x1 == 0):
         return 0
+    
     return (y2-y1)/(x2-x1)
 
 def DeltaT(T, P, Tbase):
-    r=0.01
-    k=0.5
-    return r*(P-(k*(T-Tbase)))
+    r=0.0085
+    k=0.0040
+    return r*P - k*(T-Tbase)
 
 ############################
 # simulate temperature profile
 def SimulateTemperature():
+    global sim_last_time, sim_base_temp, current_power
+    global TempCells, NumCells
+    if (sim_last_time == 0):
+        sim_last_time = ElapsedTime()
+        GotTemperature(sim_last_temp)
+        TempCells = {}
+        NumCells = 40
+        for i in range(0, NumCells):
+            TempCells[i] = sim_base_temp
+        return
+
+    t = ElapsedTime()
+    elapsed = (t - sim_last_time)
+    # the CS DMM gives a value every 0.5 seconds
+    if (elapsed < 0.5):
+        return
+
+    sim_last_time = t
+
+    TempCells[0] += DeltaT(TempCells[0], current_power, sim_base_temp) * elapsed
+    for i in range(1, NumCells):
+        TempCells[i] = (TempCells[i-1] + TempCells[i])/2
+        
+    GotTemperature(TempCells[NumCells-1])
+
+
+############################
+# simulate temperature profile
+def OLD_SimulateTemperature():
     global sim_last_time, sim_last_temp, sim_base_temp
     global PowerArray, PowerArraySize;
     if (sim_last_time == 0):
@@ -460,7 +484,7 @@ def CheckDMMInput():
 ############################
 # called once a second
 def tick():
-    global CurrentTemperature, StartTime
+    global CurrentTemperature
     elapsed = (ElapsedTime())/60.0
     CheckDMMInput()
     if (CurrentTemperature != 0):
