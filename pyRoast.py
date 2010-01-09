@@ -27,7 +27,6 @@ pcontrol = None
 pcontrol_dev = None
 profile_file = None
 verbose = False
-target_temp = 0
 
 PID_integral = 0
 PID_previous_error = 0
@@ -198,16 +197,20 @@ def SetupPlot(plot, dmmPlot, profile):
     plot.addPlotObject(profile)
 
 ###################################
+# get the target temperature
+def GetTarget():
+    if (ui.vTarget.value() != 0):
+        return ui.vTarget.value()
+    return ProfileTemperature()
+
+###################################
 # adjust the amount of power to the heat gun 
 def PowerControl():
     global CurrentTemperature, current_power
-    global pcontrol, target_temp
+    global pcontrol
 
     current = CurrentTemperature
-    if (target_temp != 0):
-        target = target_temp
-    else:
-        target = ProfileTemperature()
+    target = GetTarget()
     elapsed = ElapsedTime()/60.0
     dt = elapsed - PID_lastt
     # don't change the power level more than once every 2 seconds
@@ -235,6 +238,8 @@ def PowerControl():
     if (pcontrol is not None):
         spower = power
         # there seems to be a bug in the power controller for 100% power
+        if (spower > 99):
+            spower = 99
         pcontrol.setDTR(1)
         pcontrol.write("%u%%\r\n" % int(spower))
     current_power = power
@@ -245,13 +250,10 @@ def PowerControl():
 
 def PID_PowerControl():
     global CurrentTemperature, PID_integral, PID_previous_error, current_power
-    global PID_lastt, pcontrol, target_temp
+    global PID_lastt, pcontrol
 
     current = CurrentTemperature
-    if (target_temp != 0):
-        target = target_temp
-    else:
-        target = ProfileTemperature()
+    target = GetTarget()
     elapsed = ElapsedTime()/60.0
     dt = elapsed - PID_lastt
     # don't change the power level more than once every 2 seconds
@@ -537,7 +539,7 @@ if __name__ == "__main__":
         opts, args = getopt.getopt(sys.argv[1:], "h",
                                    ["help", "smooth=", "pcontrol=",
                                     "profile=", "simulate", "verbose",
-                                    "speedup=", "target="])
+                                    "speedup=","maxtemp=","maxtime="])
     except getopt.GetoptError, err:
         print str(err)
         usage()
@@ -553,8 +555,10 @@ if __name__ == "__main__":
             simulate_temp = True
         elif o in ("--speedup"):
             time_speedup = int(a)
-        elif o in ("--target"):
-            target_temp = int(a)
+        elif o in ("--maxtemp"):
+            gMaxTemp = int(a)
+        elif o in ("--maxtime"):
+            gMaxTime = int(a)
         elif o in ("--smooth"):
             gTempArraySize = int(a)
         elif o in ("--profile"):
