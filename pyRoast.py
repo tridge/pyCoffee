@@ -1,4 +1,5 @@
-#!/usr/bin/python
+#!/usr/bin/env python2
+
 ###################################
 # pyRoast - Coffee roasting profile
 # (C) Andrew Tridgell 2009
@@ -10,6 +11,7 @@ import time, os, subprocess, signal, select, csv
 from PyKDE4.kio import KFileDialog
 from PyKDE4.kdecore import KUrl
 from PyQt4.QtGui import QFileDialog
+from PyQt4 import QtGui
 import getopt, sys, serial, math
 
 # a few constants
@@ -22,10 +24,13 @@ gMaxTemp = 300
 gVersion = "0.1"
 rmr = "./RawMeterReader"
 simulate_temp = False
+nodmm = False
 time_speedup = 1
 pcontrol = None
 pcontrol_dev = None
 profile_file = None
+temp2_dev = None
+temp2 = None
 verbose = False
 
 PID_integral = 0
@@ -179,7 +184,7 @@ def bSaveAs():
 def bQuit():
     global pcontrol
     # kill off the meter reader child
-    if (not simulate_temp):
+    if (not nodmm):
         os.kill(dmm.pid, signal.SIGTERM)
     if (pcontrol is not None):
         pcontrol.write("0%\r\n")
@@ -237,7 +242,6 @@ def PowerControl():
         AddMessage("power => " + str(int(power)))
     if (pcontrol is not None):
         spower = power
-        # there seems to be a bug in the power controller for 100% power
         if (spower > 99):
             spower = 99
         pcontrol.setDTR(1)
@@ -301,12 +305,15 @@ def PID_PowerControl():
 
 ####################
 # called when we get a temp value
-def GotTemperature(temp):
+def GotTemperature(temp, temp2=None):
     global CurrentTemperature, MaxTemperature, TemperatureArray
     if (len(TemperatureArray) >= gTempArraySize):
         del TemperatureArray[:1]
     if (temp <= 0.0):
         return
+    if temp2 != None:
+        temp = (temp + temp2) / 2
+        ui.tCurrentTemperature2.setText("%.1f" % temp2)
     TemperatureArray.append(temp)
     CurrentTemperature = sum(TemperatureArray) / len(TemperatureArray)
     if (CurrentTemperature > MaxTemperature):
@@ -458,6 +465,8 @@ def CheckDMMInput():
     if (simulate_temp):
         SimulateTemperature()
         return
+    if (nodmm):
+        return
     while (select.select([dmm_file], [], [], 0)[0]):
         line = dmm_file.readline().strip(" \n\r")
         s = line.split(" ")
@@ -484,11 +493,52 @@ def CheckDMMInput():
 
 
 ############################
+# check for input from the power controller
+def PcontrolRead():
+    global CurrentTemperature, MaxTemperature
+    global pcontrol
+    while (select.select([pcontrol], [], [], 0)[0]):
+        line = pcontrol.readline().strip(" \n\r")
+        print line
+        try:
+            tarray = line.split()
+            if (tarray[0] == "T"):
+                ambient = float(tarray[1])
+                temperature1 = float(tarray[2])
+                temperature2 = float(tarray[3])
+                GotTemperature(temperature1, temperature2)
+                print "ambient=%.1f temperature1=%.1f temperature2=%.1f" % (ambient, temperature1, temperature2)
+        except:
+            pass
+
+def Temp2Read():
+    global CurrentTemperature, MaxTemperature
+    global temp2
+    if (temp2 == None):
+        return
+    while (select.select([temp2], [], [], 0)[0]):
+        line = temp2.readline().strip(" \n\r")
+        print line
+        try:
+            tarray = line.split()
+            ambient = float(tarray[0])
+            temperature1 = float(tarray[1])
+            temperature2 = float(tarray[2])
+            GotTemperature(temperature1, temperature2)
+            print "ambient=%.1f temperature1=%.1f temperature2=%.1f" % (ambient, temperature1, temperature2)
+        except:
+            pass
+            
+
+
+############################
 # called once a second
 def tick():
     global CurrentTemperature
     elapsed = (ElapsedTime())/60.0
     CheckDMMInput()
+    Temp2Read()
+    PcontrolRead()
     if (CurrentTemperature != 0):
         dmmPlot.addPoint(elapsed, CurrentTemperature, "")
     ui.tElapsed.setText(TimeString());
@@ -515,6 +565,14 @@ def PcontrolOpen(file):
     s.setDTR(1)
     return s
 
+############################
+# open a serial port for 
+# temp readings
+def Temp2Open(file):
+    s = serial.Serial(file, 9600, parity='N', rtscts=False, 
+                      xonxoff=False, timeout=1.0)
+    return s
+
 
 #############################
 def usage():
@@ -526,6 +584,8 @@ Options:
   --simulate	       simulate temperature readings
   --profile PROFILE    preload a profile
   --pcontrol FILE      send PID power control to FILE
+  --temp2 FILE         get 2nd temperature sources from FILE
+  --nodmm	       don't try to read digital multimeter
   --smooth N	       smooth temperature over N values
 """
     
@@ -539,7 +599,8 @@ if __name__ == "__main__":
         opts, args = getopt.getopt(sys.argv[1:], "h",
                                    ["help", "smooth=", "pcontrol=",
                                     "profile=", "simulate", "verbose",
-                                    "speedup=","maxtemp=","maxtime="])
+                                    "speedup=","maxtemp=","maxtime=",
+                                    "temp2=", "nodmm"])
     except getopt.GetoptError, err:
         print str(err)
         usage()
@@ -553,6 +614,7 @@ if __name__ == "__main__":
             verbose = True
         elif o in ("--simulate"):
             simulate_temp = True
+            nodmm = True
         elif o in ("--speedup"):
             time_speedup = int(a)
         elif o in ("--maxtemp"):
@@ -565,6 +627,10 @@ if __name__ == "__main__":
             profile_file = a
         elif o in ("--pcontrol"):
             pcontrol_dev = a
+        elif o in ("--temp2"):
+            temp2_dev = a
+        elif o in ("--nodmm"):
+            nodmm = True
         else:
             assert False, "unhandled option"
 
@@ -611,13 +677,17 @@ if __name__ == "__main__":
     ui.sPowerSlider.setValue(current_power)
     ui.cAutoPower.setChecked(True)
     # start the dmm child
-    if (not simulate_temp):
+    if (not nodmm):
         dmm = subprocess.Popen(rmr, stdout=subprocess.PIPE)
         dmm_file = dmm.stdout
 
     if (pcontrol_dev is not None):
         AddMessage("opening power control " + pcontrol_dev);
         pcontrol = PcontrolOpen(pcontrol_dev)
+
+    if (temp2_dev is not None):
+        AddMessage("opening pauls temperature contraption " + temp2_dev);
+        temp2 = Temp2Open(temp2_dev)
 
     # set a default file name
     ChooseDefaultFileName()
