@@ -1,24 +1,26 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
+
+import csv
+import getopt
+import os
+import signal
+import subprocess
+import time
+
+import select
+import serial
 
 ###################################
 # pyRoast - Coffee roasting profile
 # (C) Andrew Tridgell 2009
 # Released under GNU GPLv3 or later
+import wx
 
 from pyRoastUI import *
-from PyKDE4.kdeui import KPlotObject
-import time, os, subprocess, signal, select, csv
-from PyKDE4.kio import KFileDialog
-from PyKDE4.kdecore import KUrl
-from PyQt4.QtGui import QFileDialog
-from PyQt4 import QtGui
-import getopt, sys, serial, math
 
 # a few constants
 gTempArraySize = 5
 gUpdateFrequency = 0.25
-gPlotColor = QtGui.QColor(255, 128, 128)
-gProfileColor = QtGui.QColor(10, 50, 255)
 gMaxTime = 30.0
 gMaxTemp = 300
 gVersion = "0.1"
@@ -45,211 +47,259 @@ sim_last_time = 0
 sim_last_temp = 0
 sim_base_temp = 29.0
 
+
 ######################
 # get the elapsed time
 def ElapsedTime():
     global StartTime
-    return time_speedup*(time.time() - StartTime)
+    return time_speedup * (time.time() - StartTime)
+
 
 #############################
 # current time in mm:ss form
 def TimeString():
-    elapsed = ElapsedTime()/60.0
-    return ("%2u:%02u" % (int(elapsed), (elapsed - int(elapsed))*60))
-    
+    elapsed = ElapsedTime() / 60.0
+    return f"{int(elapsed):02g}:{(elapsed - int(elapsed)) * 60:02.0f}"
+
 
 ############################
 # write a message to the msg
 # window, prefixed by the time
 def AddMessage(m):
-    ui.tMessages.append(TimeString() + " " + m)
+    ui.temp_readout.write(f"{TimeString()} {m}\n")
+
 
 def DebugMessage(m):
     global verbose
-    if (verbose):
+    if verbose:
         AddMessage(m)
+
 
 ############################
 # reset the plot
-def bReset():
+def bReset(event):
     global StartTime, CurrentTemperature, MaxTemperature, sim_last_time, TemperatureArray
     StartTime = time.time()
     sim_last_time = 0
-    dmmPlot.clearPoints()
+    dmmPlot.set_data([], [])
     CurrentTemperature = 0
     MaxTemperature = 0
     TemperatureArray = []
-    ui.tMessages.setText("")
-    ui.TemperaturePlot.update()
+    ui.temp_readout.SetValue("")
+    ui.temperature_plot.draw()
+
 
 ############################
 # called when a roast event comes on
 def bEvent(estring):
-    elapsed = ElapsedTime()/60.0
-    dmmPlot.addPoint(elapsed, CurrentTemperature, estring)
+    elapsed = ElapsedTime() / 60.0
+    prev_annotations = ui.temperature_plot.axes.texts
+    ytext = CurrentTemperature + 50
+    if len(prev_annotations) > 0:
+        prev_anno = prev_annotations[-1]
+        if abs(ytext - prev_anno.xyann[1]) < 15:
+            ytext = ytext + 15
+    ui.temperature_plot.axes.annotate(estring, xy=(elapsed, CurrentTemperature), xytext=(elapsed + 1, ytext),
+                                      arrowprops=dict(facecolor='black', shrink=0.05, width=0.5, headwidth=2.5,
+                                                      alpha=0.7), )
     AddMessage(estring)
 
-def bFirstCrack():
+
+def bFirstCrack(event):
     bEvent("First crack")
 
-def bRollingFirstCrack():
+
+def bRollingFirstCrack(event):
     bEvent("Rolling first crack")
 
-def bSecondCrack():
+
+def bSecondCrack(event):
     bEvent("Second crack")
 
-def bRollingSecondCrack():
+
+def bRollingSecondCrack(event):
     bEvent("Rolling second crack")
 
-def bUnload():
+
+def bUnload(event):
     bEvent("Unload")
+
 
 ###########################
 # useful fn to see if a string
 # is a number
-def isNumber(s):
+def isNumber(s) -> bool:
     try:
         v = float(s)
-    except:
+    except Exception:
         return False
     return True
+
 
 ###########################
 # work out the profile temperature
 # given a time
-def ProfileTemperature():
+def ProfileTemperature() -> float:
     global LoadedProfile
-    elapsed = ElapsedTime()/60.0
-    points = LoadedProfile.points()
-    for p in points:
-        if (p.x() >= elapsed):
-            return p.y()
+    elapsed = ElapsedTime() / 60.0
+    points = LoadedProfile.get_data()
+    if len(points[1]) > 0:
+        for p in points[1]:
+            if p[0] >= elapsed:
+                return p[1]
     return 0.0
+
 
 ###########################
 # load an existing CSV
 # as a profile plot
 def LoadProfile(filename):
+    # TODO understand use of label variable.
     global LoadedProfile
     reader = csv.reader(open(filename))
-    LoadedProfile.clearPoints()
+    newx = []
+    newy = []
     for p in reader:
-        if (isNumber(p[0])):
+        if isNumber(p[0]):
             label = p[2]
-            if (isNumber(label)):
+            if isNumber(label):
                 label = ""
-            LoadedProfile.addPoint(float(p[0])/60.0, float(p[1]), label);
-    ui.TemperaturePlot.update()
+            newx.append(float(p[0]) / 60.0)
+            newy.append(float(p[1]))
+            # LoadedProfile.addPoint(float(p[0]) / 60.0, float(p[1]), label)
+    LoadedProfile.set_data(newx, newy)
+    ui.temperature_plot.draw()
+
 
 ###########################
 # load a profile via GUI
-def bLoadProfile():
+def bLoadProfile(event):
     global LoadedProfile
-    filename = QFileDialog.getOpenFileName(pyRoast, "Profile File", "", "*.csv")
-    if (filename == ""):
+    openFileDialog = wx.FileDialog(ui, "Open", "", "",
+                                   "Profile files (*.csv)|*.csv",
+                                   wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+    button_pressed = openFileDialog.ShowModal()
+    if button_pressed == wx.ID_CANCEL:
+        return
+    filename = openFileDialog.GetPath()
+    if filename == "":
         return
     LoadProfile(filename)
-    
+
+
 ###########################
 # save the data
-def bSave():
-    points = dmmPlot.points()
-    fname = str(ui.tFileName.text());
-    if (fname == ""):
+def bSave(event):
+    points = dmmPlot.get_data()
+    points = list(zip(points[0], points[1]))
+    fname = str(ui.file_entry_box.GetValue())
+    if fname == "":
         AddMessage("Please choose a file name")
         return
-    if (fname.find('.') == -1):
-        fname += ".csv";
+    if fname.find('.') == -1:
+        fname += ".csv"
     f = open(fname, 'w')
-    AddMessage("Saving %u points to \"%s\"" % (len(points), fname))
-    f.write("Time,Temperature,Event\n");
+    AddMessage(f'Saving {len(points)} points to "{fname}" ')
+    f.write("Time,Temperature,Event\n")
     for p in points:
-        f.write("%f,%f,\"%s\"\n" % (p.x()*60.0, p.y(), p.label()))
+        f.write(f'{p[0] * 60.0},{p[1]},\n')  # What is meant to be encoded by label? is it stages?
+        # f.write(f'{p[0] * 60.0},{p[1]},"{p}"\n')  # What is meant to be encoded by label? is it stages?
     f.close()
+
 
 #############################
 # save using a file dialog
-def bSaveAs():
-    filename = QFileDialog.getOpenFileName(pyRoast, "Profile File", "", "*.csv")
-    if (filename):
-        #filename = os.path.relpath(filename)
+def bSaveAs(event):
+    openFileDialog = wx.FileDialog(ui, "Save As", "", "",
+                                   "CSV files (*.csv)|*.csv",
+                                   wx.FD_SAVE)
+    button_pressed = openFileDialog.ShowModal()
+    if button_pressed == wx.ID_CANCEL:
+        return
+    filename = openFileDialog.GetFilename()
+    if filename:
         filename = str(filename)
-        if (os.path.dirname(filename) == os.path.realpath(os.curdir)):
+        if os.path.dirname(filename) == os.path.realpath(os.curdir):
             filename = os.path.basename(filename)
-        ui.tFileName.setText(filename)
-        bSave()
+        ui.file_entry_box.SetValue(filename)
+        bSave(None)
+
 
 ###############
 # shutdown
-def bQuit():
+def bQuit(event):
     global pcontrol
     # kill off the meter reader child
-    if (not nodmm):
+    if not nodmm:
         os.kill(dmm.pid, signal.SIGTERM)
-    if (pcontrol is not None):
+    if pcontrol:
         pcontrol.write("0%\r\n")
         pcontrol.setDTR(0)
-    pyRoast.close()
+    ctimer.Stop()
+    ui.Close()
+
 
 ################
 # setup the plot
 # parameters
-def SetupPlot(plot, dmmPlot, profile):
-    plot.setLimits(0.0, gMaxTime, 0.0, gMaxTemp)
-    plot.axis(0).setLabel("Temperature (" + u'\N{DEGREE SIGN}' + "C)")
-    plot.axis(1).setLabel("Time (minutes)")
-    plot.addPlotObject(dmmPlot)
-    plot.addPlotObject(profile)
+def SetupPlot(plot):  # dmmPlot, profile):
+    global dmmPlot, LoadedProfile
+    plot.axes.set_xlim(0.0, gMaxTime)
+    plot.axes.set_ylim(0.0, gMaxTemp)
+    plot.axes.set_ylabel("Temperature (" + u'\N{DEGREE SIGN}' + "C)")
+    plot.axes.set_xlabel("Time (minutes)")
+    dmmPlot = plot.axes.plot([], [], color='blue')[0]
+    LoadedProfile = plot.axes.plot([], [], color='orange')[0]
+
 
 ###################################
 # get the target temperature
-def GetTarget():
-    if (ui.vTarget.value() != 0):
-        return ui.vTarget.value()
+def GetTarget() -> float:
+    if ui.vTarget.GetValue() != 0:
+        return ui.vTarget.GetValue()
     return ProfileTemperature()
 
+
 ###################################
-# adjust the amount of power to the heat gun 
+# adjust the amount of power to the heat gun
 def PowerControl():
     global CurrentTemperature, current_power
     global pcontrol
 
     current = CurrentTemperature
     target = GetTarget()
-    elapsed = ElapsedTime()/60.0
+    elapsed = ElapsedTime() / 60.0
     dt = elapsed - PID_lastt
     # don't change the power level more than once every 2 seconds
 
-    if (dt < 2/60.0):
+    if dt < 2 / 60.0:
         return
-    
+
     error = target - CurrentTemperature
     roc = RateOfChange()
 
     power = current_power
     # predict the temperature 30 seconds
-    predict = error - (2*roc)
-    power = power + (predict/60)
-        
-    if (power > 100):
+    predict = error - (2 * roc)
+    power = power + (predict / 60)
+
+    if power > 100:
         power = 100
-    elif (power < 0):
+    elif power < 0:
         power = 0
 
-    if (not ui.cAutoPower.isChecked()):
-        power = ui.sPowerSlider.value()
-    if (int(power) != int(current_power)):
+    if ui.auto_power_chkbx.GetValue() is not True:
+        power = ui.power_slider.GetValue()
+    if int(power) != int(current_power):
         AddMessage("power => " + str(int(power)))
-    if (pcontrol is not None):
+    if pcontrol is not None:
         spower = power
-        if (spower > 99):
+        if spower > 99:
             spower = 99
         pcontrol.setDTR(1)
         pcontrol.write("%u%%\r\n" % int(spower))
     current_power = power
-    ui.tPower.clear()
-    ui.tPower.setText("%3u%%" % current_power)
-    ui.sPowerSlider.setValue(current_power)
+    ui.power_slider.SetValue(int(current_power))
 
 
 def PID_PowerControl():
@@ -258,149 +308,149 @@ def PID_PowerControl():
 
     current = CurrentTemperature
     target = GetTarget()
-    elapsed = ElapsedTime()/60.0
+    elapsed = ElapsedTime() / 60.0
     dt = elapsed - PID_lastt
     # don't change the power level more than once every 2 seconds
 
-    if (dt < 2/60.0):
+    if dt < 2 / 60.0:
         return
-    
+
     error = target - CurrentTemperature
-    PID_integral = PID_integral + (error*dt)
-    derivative = (error - PID_previous_error)/dt
-    output = (PID_Kp*error) + (PID_Ki*PID_integral) + (PID_Kd*derivative)
-#    AddMessage("dt=%f Kp_term=%f Ki_term=%f Kd_term=%f" % (dt,PID_Kp*error,PID_Ki*PID_integral,PID_Kd*derivative))
+    PID_integral = PID_integral + (error * dt)
+    derivative = (error - PID_previous_error) / dt
+    output = (PID_Kp * error) + (PID_Ki * PID_integral) + (PID_Kd * derivative)
+    #    AddMessage("dt=%f Kp_term=%f Ki_term=%f Kd_term=%f" % (dt,PID_Kp*error,PID_Ki*PID_integral,PID_Kd*derivative))
     PID_previous_error = error
     PID_lastt = elapsed
 
     # decay the integral component over 1 minute to 10%
-    decay = math.exp(dt*math.log(0.1))
+    decay = math.exp(dt * math.log(0.1))
     PID_integral = PID_integral * decay
-    
 
     # map output into power level.
     # testing shows that 50% means keep at current temp
     power = int(output + current_power)
-    if (power > 100):
+    if power > 100:
         power = 100
-    elif (power < 0):
+    elif power < 0:
         power = 0
 
-    if (ui.cAutoPower.isChecked()):
+    if ui.auto_power_chkbx.GetValue():
         DebugMessage("current=%f target=%f PID Output %f power=%f" % (current, target, output, power))
     else:
-        power = ui.sPowerSlider.value()
-    if (power != current_power):
+        power = ui.power_slider.GetValue()
+    if power != current_power:
         AddMessage("setting power to " + str(power))
-    if (pcontrol is not None):
+    if pcontrol is not None:
         spower = power
         pcontrol.setDTR(1)
         pcontrol.write("%u%%\r\n" % spower)
     current_power = power
-    ui.tPower.clear()
-    ui.tPower.setText("%3u%%" % current_power)
-    ui.sPowerSlider.setValue(current_power)
-
+    ui.power_slider.SetValue(current_power)
 
 
 ####################
 # called when we get a temp value
 def GotTemperature(temp, temp2=None):
     global CurrentTemperature, MaxTemperature, TemperatureArray
-    if (len(TemperatureArray) >= gTempArraySize):
+    if len(TemperatureArray) >= gTempArraySize:
         del TemperatureArray[:1]
-    if (temp <= 0.0):
+    if temp <= 0.0:
         return
-    if temp2 != None:
+    if temp2:
         temp = (temp + temp2) / 2
-        ui.tCurrentTemperature2.setText("%.1f" % temp2)
+        # ui.tCurrentTemperature2.setText(f"{temp2:.1f}")  # FIXME not sure where this element is meant to live
     TemperatureArray.append(temp)
     CurrentTemperature = sum(TemperatureArray) / len(TemperatureArray)
-    if (CurrentTemperature > MaxTemperature):
+    if CurrentTemperature > MaxTemperature:
         MaxTemperature = CurrentTemperature
-    ui.tCurrentTemperature.setText("%.1f" % CurrentTemperature)
-    ui.tMaxTemperature.setText("%.1f" % MaxTemperature)
-    ui.tRateOfChange.setText(("%.1f" + u'\N{DEGREE SIGN}' + "C/m") % RateOfChange())
+    ui.current_temp.SetLabel(f"{CurrentTemperature:.1f}")
+    ui.maximum_temp.SetLabel(f"{MaxTemperature:.1f}")
+    ui.rate_of_change.SetLabel(("%.1f" + u'\N{DEGREE SIGN}' + "C/m") % RateOfChange())
     PowerControl()
-                
+
+
 #################################
 # map the strange hex formatted
 # DMM digits for a Victor 86B DMM
 # to a normal digit
 def MapDigit(d):
     digitMap = {
-        0x03 : '2',
-        0x04 : '2',
-        0x05 : '2',
-        0x25 : '9',
-        0x26 : '9',
-        0x27 : '9',
-        0x2D : '5',
-        0x2E : '5',
-        0x2F : '5',
-        0x41 : '0',
-        0x42 : '0',
-        0x43 : '0',
-        0x45 : '8',
-        0x46 : '8',
-        0x47 : '8',
-        0x4D : '6',
-        0x4E : '6',
-        0x4F : '6',
-        0x60 : '1',
-        0x61 : '1',
-        0x62 : '1',
-        0xA4 : '4',
-        0xA5 : '4',
-        0xA6 : '4',
-        0xE0 : '7',
-        0xE1 : '7',
-        0xE2 : '7',
-        0xE5 : '3',
-        0xE6 : '3',
-        0xE7 : '3'}
+        0x03: '2',
+        0x04: '2',
+        0x05: '2',
+        0x25: '9',
+        0x26: '9',
+        0x27: '9',
+        0x2D: '5',
+        0x2E: '5',
+        0x2F: '5',
+        0x41: '0',
+        0x42: '0',
+        0x43: '0',
+        0x45: '8',
+        0x46: '8',
+        0x47: '8',
+        0x4D: '6',
+        0x4E: '6',
+        0x4F: '6',
+        0x60: '1',
+        0x61: '1',
+        0x62: '1',
+        0xA4: '4',
+        0xA5: '4',
+        0xA6: '4',
+        0xE0: '7',
+        0xE1: '7',
+        0xE2: '7',
+        0xE5: '3',
+        0xE6: '3',
+        0xE7: '3'}
 
     ret = ""
-    if (d & 0x10):
+    if d & 0x10:
         ret += "."
-    if (not digitMap[d & 0xEF]):
+    if not digitMap[d & 0xEF]:
         AddMessage("Bad digit: %02x" % d)
-        
+
     ret += digitMap[d & 0xEF]
     return ret
+
 
 ############################
 # work out the rate of change
 # of the temperature
-def RateOfChange():
-    points = dmmPlot.points()
+def RateOfChange() -> float:
+    points = dmmPlot.get_data()
     numpoints = len(points)
-    if (numpoints < 10):
+    if numpoints < 10:
         return 0
     x1 = 0
     x2 = points[-1].x()
     y2 = points[-1].y()
-    for i in range(2,numpoints-2):
-        if (x2 - points[-i].x() > 5.0/60):
+    for i in range(2, numpoints - 2):
+        if x2 - points[-i].x() > 5.0 / 60:
             x1 = points[-i].x()
             y1 = points[-i].y()
-            break;
-    if (x1 == 0):
+            break
+    if x1 == 0:
         return 0
-    
-    return (y2-y1)/(x2-x1)
 
-def DeltaT(T, P, Tbase):
-    r=0.0085
-    k=0.0040
-    return r*P - k*(T-Tbase)
+    return (y2 - y1) / (x2 - x1)
+
+
+def DeltaT(T, P, Tbase) -> float:
+    r = 0.0085
+    k = 0.0040
+    return r * P - k * (T - Tbase)
+
 
 ############################
 # simulate temperature profile
 def SimulateTemperature():
     global sim_last_time, sim_base_temp, current_power
     global TempCells, NumCells
-    if (sim_last_time == 0):
+    if sim_last_time == 0:
         sim_last_time = ElapsedTime()
         GotTemperature(sim_last_temp)
         TempCells = {}
@@ -412,49 +462,50 @@ def SimulateTemperature():
     t = ElapsedTime()
     elapsed = (t - sim_last_time)
     # the CS DMM gives a value every 0.5 seconds
-    if (elapsed < 0.5):
+    if elapsed < 0.5:
         return
 
     sim_last_time = t
 
     TempCells[0] += DeltaT(TempCells[0], current_power, sim_base_temp) * elapsed
     for i in range(1, NumCells):
-        TempCells[i] = (TempCells[i-1] + TempCells[i])/2
-        
-    GotTemperature(TempCells[NumCells-1])
+        TempCells[i] = (TempCells[i - 1] + TempCells[i]) / 2
+
+    GotTemperature(TempCells[NumCells - 1])
 
 
 ############################
 # simulate temperature profile
 def OLD_SimulateTemperature():
     global sim_last_time, sim_last_temp, sim_base_temp
-    global PowerArray, PowerArraySize;
-    if (sim_last_time == 0):
+    global PowerArray, PowerArraySize
+    if sim_last_time == 0:
         sim_last_time = ElapsedTime()
         sim_last_temp = sim_base_temp
         GotTemperature(sim_last_temp)
-        PowerArray = {};
+        PowerArray = {}
         PowerArraySize = 50
         return
     t = ElapsedTime()
     ielapsed = int(t)
     elapsed = (t - sim_last_time)
     # the CS DMM gives a value every 0.5 seconds
-    if (elapsed < 0.5):
+    if elapsed < 0.5:
         return
     sim_last_time = t
-    PowerArray[str(ielapsed)] = current_power;
-    if (PowerArray.has_key(str(ielapsed-PowerArraySize))):
-        del PowerArray[str(ielapsed-PowerArraySize)]
+    PowerArray[str(ielapsed)] = current_power
+    if str(ielapsed - PowerArraySize) in PowerArray.keys():
+        del PowerArray[str(ielapsed - PowerArraySize)]
     power = 0
     count = 0
-    for i in range(0,PowerArraySize):
-        if (PowerArray.has_key(str(ielapsed-i))):
-            power += PowerArray[str(ielapsed-i)]
+    for i in range(0, PowerArraySize):
+        if str(ielapsed - i) in PowerArray.keys():
+            power += PowerArray[str(ielapsed - i)]
             count = count + 1
     power = power / count
     sim_last_temp += DeltaT(sim_last_temp, power, sim_base_temp) * elapsed
-    DebugMessage(("sim_last_temp=%.2f current_power=%.2f sim_base_temp=%.2f elapsed=%.2f DeltaT=%.2f" % (sim_last_temp, current_power, sim_base_temp, elapsed, DeltaT(sim_last_temp, power, sim_base_temp))))
+    DebugMessage(("sim_last_temp=%.2f current_power=%.2f sim_base_temp=%.2f elapsed=%.2f DeltaT=%.2f" % (
+        sim_last_temp, current_power, sim_base_temp, elapsed, DeltaT(sim_last_temp, power, sim_base_temp))))
     GotTemperature(sim_last_temp)
 
 
@@ -462,34 +513,36 @@ def OLD_SimulateTemperature():
 # check for input from the DMM
 def CheckDMMInput():
     global CurrentTemperature, MaxTemperature
-    if (simulate_temp):
+    if simulate_temp:
         SimulateTemperature()
         return
-    if (nodmm):
+    if nodmm:
         return
-    while (select.select([dmm_file], [], [], 0)[0]):
+    while select.select([dmm_file], [], [], 0)[0]:
         line = dmm_file.readline().strip(" \n\r")
         s = line.split(" ")
-            
+
         if len(s) != 15:
             AddMessage("Invalid DMM data: " + line)
             return
-        if (s[12] != "BF" or s[13] != "6E" or s[14] != "6C"):
+        if s[12] != "BF" \
+                or s[13] != "6E" \
+                or s[14] != "6C":
             AddMessage("DMM not in temperature mode: " + line)
             return
 
         # oh what a strange format the data is in ...
         d1 = int(s[11][0] + s[4][0], 16)
         d2 = int(s[10][0] + s[7][0], 16)
-        d3 = int(s[8][0]  + s[6][0], 16)
-        d4 = int(s[1][0]  + s[3][0], 16)
+        d3 = int(s[8][0] + s[6][0], 16)
+        d4 = int(s[1][0] + s[3][0], 16)
         d3 ^= 0x10
         try:
             temp = float(MapDigit(d1) + MapDigit(d2) + MapDigit(d3) + MapDigit(d4))
             GotTemperature(temp)
 
-        except:
-            AddMessage("Bad DMM digits %02x %02x %02x %02x" % (d1, d2, d3, d4))
+        except Exception:
+            AddMessage(f"Bad DMM digits {d1:02x} {d2:02x} {d3:02x} {d4:02x}")
 
 
 ############################
@@ -497,86 +550,98 @@ def CheckDMMInput():
 def PcontrolRead():
     global CurrentTemperature, MaxTemperature
     global pcontrol
-    while (select.select([pcontrol], [], [], 0)[0]):
+    if pcontrol is None:
+        return
+    while select.select([pcontrol], [], [], 0)[0]:
         line = pcontrol.readline().strip(" \n\r")
-        print line
+        print(line)
         try:
             tarray = line.split()
-            if (tarray[0] == "T"):
+            if tarray[0] == "T":
                 ambient = float(tarray[1])
                 temperature1 = float(tarray[2])
                 temperature2 = float(tarray[3])
                 GotTemperature(temperature1, temperature2)
-                print "ambient=%.1f temperature1=%.1f temperature2=%.1f" % (ambient, temperature1, temperature2)
-        except:
+                print(
+                    f"ambient={round(ambient, 1)} temperature1={round(temperature1, 1)} temperature2={round(temperature2, 1)}")
+        except Exception:
             pass
+
 
 def Temp2Read():
     global CurrentTemperature, MaxTemperature
     global temp2
-    if (temp2 == None):
+    if temp2 is None:
         return
-    while (select.select([temp2], [], [], 0)[0]):
+    while select.select([temp2], [], [], 0)[0]:
         line = temp2.readline().strip(" \n\r")
-        print line
+        print(line)
         try:
             tarray = line.split()
             ambient = float(tarray[0])
             temperature1 = float(tarray[1])
             temperature2 = float(tarray[2])
             GotTemperature(temperature1, temperature2)
-            print "ambient=%.1f temperature1=%.1f temperature2=%.1f" % (ambient, temperature1, temperature2)
-        except:
+            print(
+                f"ambient={round(ambient, 1)} temperature1={round(temperature1, 1)} temperature2={round(temperature2, 1)}")
+        except Exception:
             pass
-            
 
 
 ############################
 # called once a second
-def tick():
+def tick(event):
     global CurrentTemperature
-    elapsed = (ElapsedTime())/60.0
+    elapsed = ElapsedTime() / 60.0
     CheckDMMInput()
     Temp2Read()
     PcontrolRead()
-    if (CurrentTemperature != 0):
-        dmmPlot.addPoint(elapsed, CurrentTemperature, "")
-    ui.tElapsed.setText(TimeString());
-    ui.TemperaturePlot.update()
+    print(CurrentTemperature)
+    if CurrentTemperature != 0:
+        oldx, oldy = dmmPlot.get_data()
+        newx = np.append(oldx, elapsed)
+        newy = np.append(oldy, CurrentTemperature)
+        dmmPlot.set_data(newx, newy)
+    ui.elapsed_time.SetLabel(TimeString())
+    ui.temperature_plot.draw()
+
 
 #############################
 # choose a reasonable default
 # file name
 def ChooseDefaultFileName():
-    fname = time.strftime("%Y%m%d") + ".csv";
-    i=1
-    while (os.path.exists(fname)):
-       i = i+1
-       fname = time.strftime("%Y%m%d") + "-" + str(i) + ".csv";
-    ui.tFileName.setText(fname)
+    fname = time.strftime("%Y%m%d") + ".csv"
+    i = 1
+    while os.path.exists(fname):
+        i += 1
+        fname = time.strftime("%Y%m%d") + "-" + str(i) + ".csv"
+    ui.file_entry_box.SetValue(fname)
+
 
 ############################
-# open a serial port for 
+# open a serial port for
 # power control
 def PcontrolOpen(file):
-    s = serial.Serial(file, 9600, parity='N', rtscts=False, 
+    s = serial.Serial(file, 9600, parity='N', rtscts=False,
                       xonxoff=False, timeout=1.0)
     time.sleep(0.2)
     s.setDTR(1)
     return s
 
+
 ############################
-# open a serial port for 
+# open a serial port for
 # temp readings
 def Temp2Open(file):
-    s = serial.Serial(file, 9600, parity='N', rtscts=False, 
+    s = serial.Serial(file, 9600, parity='N', rtscts=False,
                       xonxoff=False, timeout=1.0)
     return s
 
 
 #############################
 def usage():
-    print """
+    print(
+        """
 Usage: pyRoast.py [options]
 Options:
   -h                   show this help
@@ -588,10 +653,21 @@ Options:
   --nodmm	       don't try to read digital multimeter
   --smooth N	       smooth temperature over N values
 """
-    
+    )
+
+
+class PyCoffee(wx.App):
+
+    def OnInit(self):
+        self.program_frame = PyCoffeeFrame(None, id=wx.ID_ANY, title="")
+        self.SetTopWindow(self.program_frame)
+        self.program_frame.Show()
+        return True
+
 
 ############################################
 # main program
+# TODO work with Tridge about integrating second temperature read.
 if __name__ == "__main__":
     import sys
 
@@ -599,105 +675,94 @@ if __name__ == "__main__":
         opts, args = getopt.getopt(sys.argv[1:], "h",
                                    ["help", "smooth=", "pcontrol=",
                                     "profile=", "simulate", "verbose",
-                                    "speedup=","maxtemp=","maxtime=",
+                                    "speedup=", "maxtemp=", "maxtime=",
                                     "temp2=", "nodmm"])
-    except getopt.GetoptError, err:
-        print str(err)
+    except getopt.GetoptError as err:
+        print(str(err))
         usage()
         sys.exit(2)
 
-    for o,a in opts:
-        if o in ("-h", "--help"):
+    # TODO, if Roasting in the era of python >3.10, a switch-case statement would do well here.
+    for o, a in opts:
+        if o == ("-h", "--help"):
             usage()
             sys.exit(1)
-        elif o in ("--verbose"):
+        elif o == "--verbose":
             verbose = True
-        elif o in ("--simulate"):
+        elif o == "--simulate":
             simulate_temp = True
             nodmm = True
-        elif o in ("--speedup"):
+        elif o == "--speedup":
             time_speedup = int(a)
-        elif o in ("--maxtemp"):
+        elif o == "--mktemp":
             gMaxTemp = int(a)
-        elif o in ("--maxtime"):
+        elif o == "--maxtime":
             gMaxTime = int(a)
-        elif o in ("--smooth"):
+        elif o == "--smooth":
             gTempArraySize = int(a)
-        elif o in ("--profile"):
+        elif o == "--profile":
             profile_file = a
-        elif o in ("--pcontrol"):
+        elif o == "--pcontrol":
             pcontrol_dev = a
-        elif o in ("--temp2"):
+        elif o == "--temp2":
             temp2_dev = a
-        elif o in ("--nodmm"):
+        elif o == "--nodmm":
             nodmm = True
         else:
             assert False, "unhandled option"
 
-    app = QtGui.QApplication(sys.argv)
-    pyRoast = QtGui.QMainWindow()
-    ui = Ui_pyRoast()
-    ui.setupUi(pyRoast)
+    PC = PyCoffee()
+    ui = PC.program_frame
 
     # create plot of multimeter
-    dmmPlot = KPlotObject(gPlotColor, KPlotObject.Lines,
-                          6, KPlotObject.Circle)
-    LoadedProfile = KPlotObject(gProfileColor, KPlotObject.Lines,
-                                6)
-    SetupPlot(ui.TemperaturePlot, dmmPlot, LoadedProfile)
 
-    pyRoast.setWindowTitle("pyRoast")
-    
+    SetupPlot(ui.temperature_plot)
+
     # connect up the buttons
-    QtCore.QObject.connect(ui.bQuit, QtCore.SIGNAL("clicked()"), bQuit)
-    QtCore.QObject.connect(ui.bSave, QtCore.SIGNAL("clicked()"), bSave)
-    QtCore.QObject.connect(ui.bSaveAs, QtCore.SIGNAL("clicked()"), bSaveAs)
-    QtCore.QObject.connect(ui.bReset, QtCore.SIGNAL("clicked()"), bReset)
-    QtCore.QObject.connect(ui.bLoadProfile, QtCore.SIGNAL("clicked()"), bLoadProfile)
-    QtCore.QObject.connect(ui.bFirstCrack, QtCore.SIGNAL("clicked()"), bFirstCrack)
-    QtCore.QObject.connect(ui.bRollingFirstCrack,
-                           QtCore.SIGNAL("clicked()"), bRollingFirstCrack)
-    QtCore.QObject.connect(ui.bSecondCrack, QtCore.SIGNAL("clicked()"), bSecondCrack)
-    QtCore.QObject.connect(ui.bRollingSecondCrack,
-                           QtCore.SIGNAL("clicked()"), bRollingSecondCrack)
-    QtCore.QObject.connect(ui.bUnload, QtCore.SIGNAL("clicked()"), bUnload)
+    ui.Bind(wx.EVT_BUTTON, bQuit, ui.quit_btn)
+    ui.Bind(wx.EVT_BUTTON, bSave, ui.save_btn)
+    ui.Bind(wx.EVT_BUTTON, bSaveAs, ui.save_as_btn)
+    ui.Bind(wx.EVT_BUTTON, bReset, ui.reset_btn)
+    ui.Bind(wx.EVT_BUTTON, bLoadProfile, ui.load_profile_btn)
+    ui.Bind(wx.EVT_BUTTON, bFirstCrack, ui.first_crack_btn)
+    ui.Bind(wx.EVT_BUTTON, bRollingFirstCrack, ui.rolling_first_crack_btn)
+    ui.Bind(wx.EVT_BUTTON, bSecondCrack, ui.second_crack_btn)
+    ui.Bind(wx.EVT_BUTTON, bRollingSecondCrack, ui.rolling_second_crack_btn)
+    ui.Bind(wx.EVT_BUTTON, bUnload, ui.unload_btn)
 
-    ctimer = QtCore.QTimer()
-    QtCore.QObject.connect(ctimer, QtCore.SIGNAL("timeout()"), tick)
-    ctimer.start(int((1000 * gUpdateFrequency) / time_speedup))
-    
     # get the current time
     StartTime = time.time()
     TemperatureArray = []
     CurrentTemperature = 0.0
     MaxTemperature = 0.0
     current_power = 0
-    
-    ui.tPower.setText("%3u%%" % current_power)
-    ui.sPowerSlider.setValue(current_power)
-    ui.cAutoPower.setChecked(True)
+
+    ui.power_slider.SetValue(current_power)
+    ui.auto_power_chkbx.SetValue(True)
+
     # start the dmm child
-    if (not nodmm):
+    if not nodmm:
         dmm = subprocess.Popen(rmr, stdout=subprocess.PIPE)
         dmm_file = dmm.stdout
 
-    if (pcontrol_dev is not None):
-        AddMessage("opening power control " + pcontrol_dev);
+    if pcontrol_dev:
+        AddMessage("opening power control " + str(pcontrol_dev))
         pcontrol = PcontrolOpen(pcontrol_dev)
 
-    if (temp2_dev is not None):
-        AddMessage("opening pauls temperature contraption " + temp2_dev);
+    if temp2_dev:
+        AddMessage("opening pauls temperature contraption " + str(temp2_dev))
         temp2 = Temp2Open(temp2_dev)
 
     # set a default file name
     ChooseDefaultFileName()
 
-    ui.CSLogo.setPixmap(QtGui.QPixmap('cslogo.png'))
-
-    if (profile_file is not None):
+    if profile_file:
         LoadProfile(profile_file)
 
-    AddMessage("Welcome to pyRoast " + gVersion);
+    AddMessage("Welcome to pyRoast " + gVersion)
 
-    pyRoast.show()
-    sys.exit(app.exec_())
+    ctimer = wx.Timer(owner=ui, id=wx.ID_ANY)
+    ui.Bind(wx.EVT_TIMER, tick, ctimer)
+    ctimer.Start(milliseconds=int((1000 * gUpdateFrequency) / time_speedup))
+
+    PC.MainLoop()
