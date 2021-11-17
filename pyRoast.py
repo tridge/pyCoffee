@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import csv
 import getopt
@@ -713,11 +713,6 @@ if __name__ == "__main__":
 
     PC = PyCoffee()
     ui = PC.program_frame
-
-    ###
-    simulate_temp = True
-    nodmm = True
-    ###
 
     # create plot of multimeter
 
