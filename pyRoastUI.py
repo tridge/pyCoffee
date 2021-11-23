@@ -1,9 +1,7 @@
-import math
-
+import numpy as np
 import wx
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.figure import Figure
-import numpy as np
 
 
 class PyCoffeeFrame(wx.Frame):
@@ -26,7 +24,8 @@ class PyCoffeeFrame(wx.Frame):
         self.temperature_plot = LiveCoffeeGraph(self.canvas)
 
         self.coffee_img = wx.StaticBitmap(self, wx.ID_ANY, wx.Bitmap("./cslogo.png", wx.BITMAP_TYPE_ANY))
-        self.temp_readout = wx.TextCtrl(self, id=wx.ID_ANY, value='', size=(220, 220), style=wx.VSCROLL | wx.TE_MULTILINE | wx.EXPAND)
+        self.temp_readout = wx.TextCtrl(self, id=wx.ID_ANY, value='', size=(220, 220),
+                                        style=wx.VSCROLL | wx.TE_MULTILINE | wx.EXPAND)
 
         self.temperature_label = wx.StaticText(self, wx.ID_ANY, "Temperature:", style=wx.ALIGN_LEFT)
         self.max_temperature_label = wx.StaticText(self, wx.ID_ANY, "Max temperature:", style=wx.ALIGN_LEFT)
@@ -34,16 +33,18 @@ class PyCoffeeFrame(wx.Frame):
         self.elapsed_time_label = wx.StaticText(self, wx.ID_ANY, "Elapsed time:", style=wx.ALIGN_LEFT)
         self.current_temp = wx.StaticText(self, wx.ID_ANY, "212.4", style=wx.ALIGN_RIGHT)
         self.maximum_temp = wx.StaticText(self, wx.ID_ANY, "250.4", style=wx.ALIGN_RIGHT)
-        self.rate_of_change = wx.StaticText(self, wx.ID_ANY, ".04C/min", style=wx.ALIGN_RIGHT)
+        self.rate_of_change = wx.StaticText(self, wx.ID_ANY, "0.0 C/min", style=wx.ALIGN_RIGHT)
         self.elapsed_time = wx.StaticText(self, wx.ID_ANY, "00:00", style=wx.ALIGN_RIGHT)
 
         self.auto_power_chkbx = wx.CheckBox(self, id=wx.ID_ANY, label="Auto Power")
-        self.power_slider = wx.Slider(self, wx.ID_ANY, value=67, minValue=0, maxValue=100, pos=wx.DefaultPosition, size=(250, -1), style=wx.SL_AUTOTICKS | wx.SL_HORIZONTAL | wx.SL_LABELS)
+        self.power_slider = wx.Slider(self, wx.ID_ANY, value=67, minValue=0, maxValue=100, pos=wx.DefaultPosition,
+                                      size=(250, -1), style=wx.SL_AUTOTICKS | wx.SL_HORIZONTAL | wx.SL_LABELS)
 
         self.first_crack_btn = wx.Button(self, wx.ID_ANY, label=" First \nCrack", size=wx.Size(90, 50))
         self.rolling_first_crack_btn = wx.Button(self, wx.ID_ANY, label="  Rolling \nFirst Crack", size=wx.Size(90, 50))
         self.second_crack_btn = wx.Button(self, wx.ID_ANY, label="Second \n  Crack", size=wx.Size(90, 50))
-        self.rolling_second_crack_btn = wx.Button(self, wx.ID_ANY, label="     Rolling \nSecond Crack", size=wx.Size(90, 50))
+        self.rolling_second_crack_btn = wx.Button(self, wx.ID_ANY, label="     Rolling \nSecond Crack",
+                                                  size=wx.Size(90, 50))
         self.unload_btn = wx.Button(self, wx.ID_ANY, label="Unload", size=wx.Size(90, 50))
 
         self.file_name_label = wx.StaticText(self, wx.ID_ANY, "File Name:")
@@ -94,7 +95,6 @@ class PyCoffeeFrame(wx.Frame):
         save_panel.Add(self.vTarget_label, flag=wx.TOP | wx.BOTTOM, border=5)
         save_panel.Add(self.vTarget)
 
-
         save_btn_panel.Add(self.reset_btn)
         save_btn_panel.Add(self.save_btn)
         save_btn_panel.Add(self.save_as_btn)
@@ -118,7 +118,8 @@ class PyCoffeeFrame(wx.Frame):
 
         self.SetSizer(whole_win)
 
-class LiveCoffeeGraph():
+
+class LiveCoffeeGraph:
     def __init__(self, parent):
         self.axes = parent.figure.add_subplot(111)
         self.axes.autoscale_view('tight')
@@ -131,7 +132,7 @@ class LiveCoffeeGraph():
 
     def test_draw(self):
         t = list(np.arange(0, 30, 0.1))
-        s = np.sin(t)*100+150
+        s = np.sin(t) * 100 + 150
         self.axes.plot(t, s)
 
     def draw(self):

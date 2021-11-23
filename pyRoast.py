@@ -2,11 +2,13 @@
 
 import csv
 import getopt
+import math
 import os
 import signal
 import subprocess
 import time
 
+import matplotlib.lines
 import select
 import serial
 
@@ -14,7 +16,6 @@ import serial
 # pyRoast - Coffee roasting profile
 # (C) Andrew Tridgell 2009
 # Released under GNU GPLv3 or later
-import wx
 
 from pyRoastUI import *
 
@@ -34,6 +35,8 @@ profile_file = None
 temp2_dev = None
 temp2 = None
 verbose = False
+dmmPlot: matplotlib.lines.Line2D = None
+LoadedProfile: matplotlib.lines.Line2D = None
 
 PID_integral = 0
 PID_previous_error = 0
@@ -77,6 +80,7 @@ def DebugMessage(m):
 
 ############################
 # reset the plot
+# noinspection PyUnusedLocal
 def bReset(event):
     global StartTime, CurrentTemperature, MaxTemperature, sim_last_time, TemperatureArray
     StartTime = time.time()
@@ -105,22 +109,27 @@ def bEvent(estring):
     AddMessage(estring)
 
 
+# noinspection PyUnusedLocal
 def bFirstCrack(event):
     bEvent("First crack")
 
 
+# noinspection PyUnusedLocal
 def bRollingFirstCrack(event):
     bEvent("Rolling first crack")
 
 
+# noinspection PyUnusedLocal
 def bSecondCrack(event):
     bEvent("Second crack")
 
 
+# noinspection PyUnusedLocal
 def bRollingSecondCrack(event):
     bEvent("Rolling second crack")
 
 
+# noinspection PyUnusedLocal
 def bUnload(event):
     bEvent("Unload")
 
@@ -128,10 +137,11 @@ def bUnload(event):
 ###########################
 # useful fn to see if a string
 # is a number
+# noinspection PyUnusedLocal
 def isNumber(s) -> bool:
     try:
         v = float(s)
-    except Exception:
+    except ValueError:
         return False
     return True
 
@@ -153,6 +163,7 @@ def ProfileTemperature() -> float:
 ###########################
 # load an existing CSV
 # as a profile plot
+# noinspection PyUnusedLocal
 def LoadProfile(filename):
     # TODO understand use of label variable.
     global LoadedProfile
@@ -173,6 +184,7 @@ def LoadProfile(filename):
 
 ###########################
 # load a profile via GUI
+# noinspection PyUnusedLocal
 def bLoadProfile(event):
     global LoadedProfile
     openFileDialog = wx.FileDialog(ui, "Open", "", "",
@@ -189,6 +201,7 @@ def bLoadProfile(event):
 
 ###########################
 # save the data
+# noinspection PyUnusedLocal
 def bSave(event):
     points = dmmPlot.get_data()
     points = list(zip(points[0], points[1]))
@@ -209,6 +222,7 @@ def bSave(event):
 
 #############################
 # save using a file dialog
+# noinspection PyUnusedLocal
 def bSaveAs(event):
     openFileDialog = wx.FileDialog(ui, "Save As", "", "",
                                    "CSV files (*.csv)|*.csv",
@@ -227,6 +241,7 @@ def bSaveAs(event):
 
 ###############
 # shutdown
+# noinspection PyUnusedLocal
 def bQuit(event):
     global pcontrol
     # kill off the meter reader child
@@ -266,7 +281,6 @@ def PowerControl():
     global CurrentTemperature, current_power
     global pcontrol
 
-    current = CurrentTemperature
     target = GetTarget()
     elapsed = ElapsedTime() / 60.0
     dt = elapsed - PID_lastt
@@ -277,7 +291,6 @@ def PowerControl():
 
     error = target - CurrentTemperature
     roc = RateOfChange()
-
     power = current_power
     # predict the temperature 30 seconds
     predict = error - (2 * roc)
@@ -297,7 +310,8 @@ def PowerControl():
         if spower > 99:
             spower = 99
         pcontrol.setDTR(1)
-        pcontrol.write("%u%%\r\n" % int(spower))
+        # pcontrol.write("%u%%\r\n" % int(spower))
+        pcontrol.write(f"{int(spower)}%")
     current_power = power
     ui.power_slider.SetValue(int(current_power))
 
@@ -422,20 +436,20 @@ def MapDigit(d):
 # of the temperature
 def RateOfChange() -> float:
     points = dmmPlot.get_data()
-    numpoints = len(points)
+    numpoints = len(points[0])
     if numpoints < 10:
         return 0
     x1 = 0
-    x2 = points[-1].x()
-    y2 = points[-1].y()
+    y1 = 0
+    x2 = points[0][-1]
+    y2 = points[1][-1]
     for i in range(2, numpoints - 2):
-        if x2 - points[-i].x() > 5.0 / 60:
-            x1 = points[-i].x()
-            y1 = points[-i].y()
+        if x2 - points[0][-i] > 5.0 / 60:
+            x1 = points[0][-i]
+            y1 = points[1][-i]
             break
     if x1 == 0:
         return 0
-
     return (y2 - y1) / (x2 - x1)
 
 
@@ -519,16 +533,16 @@ def CheckDMMInput():
     if nodmm:
         return
     while select.select([dmm_file], [], [], 0)[0]:
-        line = dmm_file.readline().strip(" \n\r")
-        s = line.split(" ")
+        line = dmm_file.readline().strip()
+        s = line.split()
 
         if len(s) != 15:
-            AddMessage("Invalid DMM data: " + line)
+            AddMessage("Invalid DMM data: " + str(line))
             return
         if s[12] != "BF" \
                 or s[13] != "6E" \
                 or s[14] != "6C":
-            AddMessage("DMM not in temperature mode: " + line)
+            AddMessage("DMM not in temperature mode: " + str(line))
             return
 
         # oh what a strange format the data is in ...
@@ -541,7 +555,8 @@ def CheckDMMInput():
             temp = float(MapDigit(d1) + MapDigit(d2) + MapDigit(d3) + MapDigit(d4))
             GotTemperature(temp)
 
-        except Exception:
+        except KeyError as ke:  # KeyError should be occuring in MapDigit()
+            print(ke)
             AddMessage(f"Bad DMM digits {d1:02x} {d2:02x} {d3:02x} {d4:02x}")
 
 
@@ -553,7 +568,7 @@ def PcontrolRead():
     if pcontrol is None:
         return
     while select.select([pcontrol], [], [], 0)[0]:
-        line = pcontrol.readline().strip(" \n\r")
+        line = pcontrol.readline().strip()
         print(line)
         try:
             tarray = line.split()
@@ -562,9 +577,11 @@ def PcontrolRead():
                 temperature1 = float(tarray[2])
                 temperature2 = float(tarray[3])
                 GotTemperature(temperature1, temperature2)
-                print(
-                    f"ambient={round(ambient, 1)} temperature1={round(temperature1, 1)} temperature2={round(temperature2, 1)}")
-        except Exception:
+                print(f"ambient={round(ambient, 1)} "
+                      f"temperature1={round(temperature1, 1)} "
+                      f"temperature2={round(temperature2, 1)}")
+        except IndexError as ie:
+            print(ie)
             pass
 
 
@@ -574,7 +591,7 @@ def Temp2Read():
     if temp2 is None:
         return
     while select.select([temp2], [], [], 0)[0]:
-        line = temp2.readline().strip(" \n\r")
+        line = temp2.readline().strip()
         print(line)
         try:
             tarray = line.split()
@@ -582,14 +599,17 @@ def Temp2Read():
             temperature1 = float(tarray[1])
             temperature2 = float(tarray[2])
             GotTemperature(temperature1, temperature2)
-            print(
-                f"ambient={round(ambient, 1)} temperature1={round(temperature1, 1)} temperature2={round(temperature2, 1)}")
-        except Exception:
+            print(f"ambient={round(ambient, 1)} "
+                  f"temperature1={round(temperature1, 1)} "
+                  f"temperature2={round(temperature2, 1)}")
+        except IndexError as ie:
+            print(ie)
             pass
 
 
 ############################
 # called once a second
+# noinspection PyUnusedLocal
 def tick(event):
     global CurrentTemperature
     elapsed = ElapsedTime() / 60.0
